@@ -44,9 +44,6 @@ def solve(payload):
   excluded=all(days[d]['type']=='closed' or locks.get(f'{PEOPLE[p]}-{d+1}')=='W' for d in range(D)) and any(locks.get(f'{PEOPLE[p]}-{d+1}')=='W' for d in range(D))
   quota=0 if excluded else target
   add([(idx(p,d,s),1) for d in range(D) for s in range(2)],low=quota,high=quota)
-  if quota:
-   for shift in range(2):
-    add([(idx(p,d,shift),1) for d in range(D)],low=quota//2,high=(quota+1)//2)
   if PEOPLE[p]=='E':
    for d in range(D-3):add([(idx(p,t,1),1) for t in range(d,d+4)],high=3)
    for d in range(min(2,D)):add([(idx(p,d,0),1)],high=0)
@@ -71,7 +68,7 @@ def solve(payload):
   for j,v in terms:A[r,j]+=v
  c=np.zeros(N)
  res=milp(c,integrality=np.ones(N),bounds=Bounds(np.zeros(N),np.ones(N)),constraints=LinearConstraint(A.tocsr(),np.array(lo),np.array(hi)),options={'time_limit':90})
- if res.x is None:return {'ok':False,'message':f'Nie znaleziono grafiku z dokładnie {target*12} h na osobę i wyrównaniem zmian 6/18. Wynik solvera: {res.message}. Sprawdź ograniczenia i dni zamknięte.','days':days}
+ if res.x is None:return {'ok':False,'message':f'Nie znaleziono grafiku z dokładnie {target*12} h na aktywną osobę. Wynik solvera: {res.message}. Sprawdź ograniczenia i dni zamknięte.','days':days}
  sched={PEOPLE[p]:[('6' if res.x[idx(p,d,0)]>.5 else '18' if res.x[idx(p,d,1)]>.5 else '') for d in range(D)] for p in range(9)}
  return {'ok':True,'schedule':sched,'days':days,'message':f'Grafik wygenerowany. Każdy aktywny pracownik ma dokładnie {target*12} h przy nominale {nominal} h. Sprawdź pozostałe zasady.'}
 def validate(payload):
@@ -84,7 +81,6 @@ def validate(payload):
   excluded=all(days[d]['type']=='closed' or payload.get('locks',{}).get(f'{p}-{d+1}')=='W' for d in range(len(days))) and any(payload.get('locks',{}).get(f'{p}-{d+1}')=='W' for d in range(len(days)))
   expected=0 if excluded else target
   if worked!=expected:issues.append(f'{p}: {worked*12} h, wymagane dokładnie {expected*12} h (nominał {nominal} h)')
-  if not excluded and abs(vals.count('6')-vals.count('18'))>1:issues.append(f'{p}: nierówne zmiany 6/18 ({vals.count("6")}/{vals.count("18")})')
   for d,day in enumerate(days):
    if day['type']=='closed' and vals[d] in ('6','18'):issues.append(f'{p}, dzień {d+1}: praca w dniu zamkniętym')
    if day['type']=='sat' and vals[d]=='18':issues.append(f'{p}, dzień {d+1}: nocna zmiana w sobotę')
