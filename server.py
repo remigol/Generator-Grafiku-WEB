@@ -11,6 +11,7 @@ class Handler(SimpleHTTPRequestHandler):
    if n>200000:raise ValueError('Za duży formularz')
    data=json.loads(self.rfile.read(n));path=self.path.split('?')[0]
    if path=='/api/generate':return self.json(solve(data))
+   if path=='/api/diagnose':return self.json(solve(data,diagnostic=True))
    if path=='/api/validate':return self.json({'issues':validate(data)})
    if path=='/api/export':
     issues=validate(data)
