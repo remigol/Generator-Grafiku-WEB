@@ -41,7 +41,12 @@ def solve(payload):
   for d in range(D-1):
    add([(idx(p,d,0),1),(idx(p,d+1,1),1)],high=1)
    add([(idx(p,d,1),1),(idx(p,d+1,0),1)],high=1)
-  add([(idx(p,d,s),1) for d in range(D) for s in range(2)],low=target,high=target+2)
+  excluded=all(days[d]['type']=='closed' or locks.get(f'{PEOPLE[p]}-{d+1}')=='W' for d in range(D)) and any(locks.get(f'{PEOPLE[p]}-{d+1}')=='W' for d in range(D))
+  quota=0 if excluded else target
+  add([(idx(p,d,s),1) for d in range(D) for s in range(2)],low=quota,high=quota)
+  if quota:
+   for shift in range(2):
+    add([(idx(p,d,shift),1) for d in range(D)],low=quota//2,high=(quota+1)//2)
   if PEOPLE[p]=='E':
    for d in range(D-3):add([(idx(p,t,1),1) for t in range(d,d+4)],high=3)
    for d in range(min(2,D)):add([(idx(p,d,0),1)],high=0)
@@ -64,11 +69,11 @@ def solve(payload):
  A=lil_matrix((len(rows),N),dtype=float)
  for r,terms in enumerate(rows):
   for j,v in terms:A[r,j]+=v
- c=np.array([1+.01*p+.0001*d+(.004 if s else 0) for p in range(9) for d in range(D) for s in range(2)])
- res=milp(c,integrality=np.ones(N),bounds=Bounds(np.zeros(N),np.ones(N)),constraints=LinearConstraint(A.tocsr(),np.array(lo),np.array(hi)),options={'time_limit':45,'mip_rel_gap':.02})
- if res.x is None:return {'ok':False,'message':f'Nie znaleziono grafiku zapewniającego każdemu co najmniej {target*12} h przy obecnych ograniczeniach. Zmień ustawienia lub ręczne blokady.','days':days}
+ c=np.zeros(N)
+ res=milp(c,integrality=np.ones(N),bounds=Bounds(np.zeros(N),np.ones(N)),constraints=LinearConstraint(A.tocsr(),np.array(lo),np.array(hi)),options={'time_limit':90})
+ if res.x is None:return {'ok':False,'message':f'Nie znaleziono grafiku z dokładnie {target*12} h na osobę i wyrównaniem zmian 6/18. Wynik solvera: {res.message}. Sprawdź ograniczenia i dni zamknięte.','days':days}
  sched={PEOPLE[p]:[('6' if res.x[idx(p,d,0)]>.5 else '18' if res.x[idx(p,d,1)]>.5 else '') for d in range(D)] for p in range(9)}
- return {'ok':True,'schedule':sched,'days':days,'message':f'Grafik wygenerowany. Każdy pracownik ma minimum {target*12} h przy nominale {nominal} h. Sprawdź pozostałe zasady.'}
+ return {'ok':True,'schedule':sched,'days':days,'message':f'Grafik wygenerowany. Każdy aktywny pracownik ma dokładnie {target*12} h przy nominale {nominal} h. Sprawdź pozostałe zasady.'}
 def validate(payload):
  days=build_days(int(payload['year']),int(payload['month']),set(map(int,payload.get('closed',[]))))
  sched=payload['schedule'];issues=[];nominal=int(payload.get('nominal',176));target=max(0,math.ceil(nominal/12))
@@ -76,8 +81,10 @@ def validate(payload):
   vals=sched.get(p,[])
   if len(vals)!=len(days):issues.append(f'{p}: niepełny grafik');continue
   worked=sum(v in ('6','18') for v in vals)
-  if worked<target:issues.append(f'{p}: {worked*12} h, wymagane minimum {target*12} h (nominał {nominal} h)')
-  if worked>target+2:issues.append(f'{p}: {worked*12} h, przekroczony limit wyrównawczy {(target+2)*12} h')
+  excluded=all(days[d]['type']=='closed' or payload.get('locks',{}).get(f'{p}-{d+1}')=='W' for d in range(len(days))) and any(payload.get('locks',{}).get(f'{p}-{d+1}')=='W' for d in range(len(days)))
+  expected=0 if excluded else target
+  if worked!=expected:issues.append(f'{p}: {worked*12} h, wymagane dokładnie {expected*12} h (nominał {nominal} h)')
+  if not excluded and abs(vals.count('6')-vals.count('18'))>1:issues.append(f'{p}: nierówne zmiany 6/18 ({vals.count("6")}/{vals.count("18")})')
   for d,day in enumerate(days):
    if day['type']=='closed' and vals[d] in ('6','18'):issues.append(f'{p}, dzień {d+1}: praca w dniu zamkniętym')
    if day['type']=='sat' and vals[d]=='18':issues.append(f'{p}, dzień {d+1}: nocna zmiana w sobotę')
