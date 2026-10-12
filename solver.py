@@ -43,6 +43,10 @@ def solve(payload, diagnostic=False, relax=None):
    if val in ('6','18','W'):
     if val=='W':add([(idx(p,d,s),1) for s in range(2)],high=0)
     else:add([(idx(p,d,0 if val=='6' else 1),1)],low=1)
+  # Zakaz przejścia z nocnej 18 na poranną 6 następnego dnia.
+  # Dotyczy także ręcznych blokad i jest regułą bezwzględną.
+  for d in range(D-1):
+   add([(idx(p,d,1),1),(idx(p,d+1,0),1)],high=1)
   active=block_days(year,month,days)
   L=len(active)
   def day_terms(k,coefficient=1):
