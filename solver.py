@@ -19,6 +19,7 @@ def build_days(year,month,closed):
 def block_days(year,month,days):
  # Święta ustawowe w dni pon.-sob. są neutralne dla ciągłości bloków.
  # Niedziele oraz ręcznie zamknięte dni pozostają dniami odpoczynku.
+ # Niedziela NIE jest usuwana z osi bloków: zawsze rozdziela pracę.
  hol=holidays(year)
  return [i for i,day in enumerate(days) if not (day['type']=='closed' and datetime.date(year,month,i+1) in hol and day['weekday']!=6)]
 
@@ -54,9 +55,8 @@ def solve(payload, diagnostic=False, relax=None):
    for k in range(1,L-2):
     add(day_terms(k)+day_terms(k-1,-1)+day_terms(k+1,-1),high=0)
     add(day_terms(k)+day_terms(k-1,-1)+day_terms(k+2,-1),high=0)
-   if L>=3:
-    add(day_terms(0)+day_terms(1,-1),high=0)
-    add(day_terms(0)+day_terms(2,-1),high=0)
+   # Nie znamy poprzedniego miesiąca: nie wymuszamy startu nowego
+   # 3-dniowego bloku w pierwszym dniu miesiąca. Kontynuacja jest możliwa.
   if 'rest' not in relax:
    for k in range(L-2):
     add(day_terms(k)+day_terms(k+1,-1)+day_terms(k+2),high=1)
