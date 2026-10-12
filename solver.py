@@ -16,6 +16,12 @@ def build_days(year,month,closed):
   typ='closed' if dt.weekday()==6 or dt in hol or d in closed else ('sat' if dt.weekday()==5 else 'weekday')
   days.append({'day':d,'weekday':dt.weekday(),'type':typ})
  return days
+def block_days(year,month,days):
+ # Święta ustawowe w dni pon.-sob. są neutralne dla ciągłości bloków.
+ # Niedziele oraz ręcznie zamknięte dni pozostają dniami odpoczynku.
+ hol=holidays(year)
+ return [i for i,day in enumerate(days) if not (day['type']=='closed' and datetime.date(year,month,i+1) in hol and day['weekday']!=6)]
+
 def solve(payload, diagnostic=False, relax=None):
  relax=set(relax or [])
  year=int(payload['year']);month=int(payload['month']);nominal=int(payload.get('nominal',176))
@@ -36,21 +42,29 @@ def solve(payload, diagnostic=False, relax=None):
    if val in ('6','18','W'):
     if val=='W':add([(idx(p,d,s),1) for s in range(2)],high=0)
     else:add([(idx(p,d,0 if val=='6' else 1),1)],low=1)
+  active=block_days(year,month,days)
+  L=len(active)
+  def day_terms(k,coefficient=1):
+   return [(idx(p,active[k],t),coefficient) for t in range(2)]
   if 'blocks' not in relax:
-   for d in range(D-4):add([(idx(p,t,s),1) for t in range(d,d+5) for s in range(2)],high=4)
-   for d in range(1,D-2):
-    add([(idx(p,d,t),1) for t in range(2)]+[(idx(p,d-1,t),-1) for t in range(2)]+[(idx(p,d+1,t),-1) for t in range(2)],high=0)
-    add([(idx(p,d,t),1) for t in range(2)]+[(idx(p,d-1,t),-1) for t in range(2)]+[(idx(p,d+2,t),-1) for t in range(2)],high=0)
-   if D>=3:
-    add([(idx(p,0,t),1) for t in range(2)]+[(idx(p,1,t),-1) for t in range(2)],high=0)
-    add([(idx(p,0,t),1) for t in range(2)]+[(idx(p,2,t),-1) for t in range(2)],high=0)
+   for k in range(L-4):
+    add([term for j in range(k,k+5) for term in day_terms(j)],high=4)
+   # Początek bloku: po rozpoczęciu wymagane są co najmniej 3 dni pracy.
+   # Granice miesiąca traktowane jako nieznana kontynuacja bloku.
+   for k in range(1,L-2):
+    add(day_terms(k)+day_terms(k-1,-1)+day_terms(k+1,-1),high=0)
+    add(day_terms(k)+day_terms(k-1,-1)+day_terms(k+2,-1),high=0)
+   if L>=3:
+    add(day_terms(0)+day_terms(1,-1),high=0)
+    add(day_terms(0)+day_terms(2,-1),high=0)
   if 'rest' not in relax:
-   for d in range(D-2):
-    add([(idx(p,d,t),1) for t in range(2)]+[(idx(p,d+1,t),-1) for t in range(2)]+[(idx(p,d+2,t),1) for t in range(2)],high=1)
+   for k in range(L-2):
+    add(day_terms(k)+day_terms(k+1,-1)+day_terms(k+2),high=1)
   if 'rotation' not in relax:
-   for d in range(D-1):
-    add([(idx(p,d,0),1),(idx(p,d+1,1),1)],high=1)
-    add([(idx(p,d,1),1),(idx(p,d+1,0),1)],high=1)
+   for k in range(L-1):
+    d=active[k];n=active[k+1]
+    add([(idx(p,d,0),1),(idx(p,n,1),1)],high=1)
+    add([(idx(p,d,1),1),(idx(p,n,0),1)],high=1)
   excluded=all(days[d]['type']=='closed' or locks.get(f'{PEOPLE[p]}-{d+1}')=='W' for d in range(D)) and any(locks.get(f'{PEOPLE[p]}-{d+1}')=='W' for d in range(D))
   quota=0 if excluded else target
   if 'quota' not in relax:add([(idx(p,d,s),1) for d in range(D) for s in range(2)],low=quota)
@@ -100,15 +114,21 @@ def validate(payload):
   for d,day in enumerate(days):
    if day['type']=='closed' and vals[d] in ('6','18'):issues.append(f'{p}, dzień {d+1}: praca w dniu zamkniętym')
    if day['type']=='sat' and vals[d]=='18':issues.append(f'{p}, dzień {d+1}: nocna zmiana w sobotę')
-  for d in range(len(days)-4):
-   if all(vals[t] in ('6','18') for t in range(d,d+5)):issues.append(f'{p}: ponad 4 dni pracy od {d+1}')
-  for d in range(len(days)):
-   if vals[d] not in ('6','18') or (d>0 and vals[d-1] in ('6','18')):continue
-   run=0
-   while d+run<len(days) and vals[d+run] in ('6','18'):run+=1
-   if d+run<len(days) and run<3 and d>0:issues.append(f'{p}: blok krótszy niż 3 dni od {d+1}')
-   if d+run+1<len(days) and any(vals[t] in ('6','18') for t in range(d+run,min(d+run+2,len(days)))):issues.append(f'{p}: brak 2 dni wolnych od {d+1}')
-   if len({v for v in vals[d:d+run] if v in ('6','18')})>1:issues.append(f'{p}: mieszane zmiany w bloku od {d+1}')
+  active=block_days(int(payload['year']),int(payload['month']),days)
+  seq=[vals[d] for d in active]
+  for k in range(len(seq)-4):
+   if all(v in ('6','18') for v in seq[k:k+5]):issues.append(f'{p}: ponad 4 dni pracy od {active[k]+1}')
+  k=0
+  while k<len(seq):
+   if seq[k] not in ('6','18'):
+    k+=1
+    continue
+   start=k
+   while k<len(seq) and seq[k] in ('6','18'):k+=1
+   run=k-start
+   if run<3 and start>0 and k<len(seq):issues.append(f'{p}: blok krótszy niż 3 dni od {active[start]+1}')
+   if k+1<len(seq) and seq[k+1] in ('6','18'):issues.append(f'{p}: brak 2 dni wolnych po {active[k-1]+1}')
+   if len(set(seq[start:k]))>1:issues.append(f'{p}: mieszane zmiany w bloku od {active[start]+1}')
  for d,day in enumerate(days):
   for shift in (['6'] if day['type']=='sat' else ['6','18'] if day['type']=='weekday' else []):
    workers=[p for p in PEOPLE if len(sched.get(p,[]))>d and sched[p][d]==shift]
