@@ -38,16 +38,23 @@ def solve(payload, diagnostic=False, relax=None):
     else:add([(idx(p,d,0 if val=='6' else 1),1)],low=1)
   if 'blocks' not in relax:
    for d in range(D-4):add([(idx(p,t,s),1) for t in range(d,d+5) for s in range(2)],high=4)
+   for d in range(1,D-2):
+    add([(idx(p,d,t),1) for t in range(2)]+[(idx(p,d-1,t),-1) for t in range(2)]+[(idx(p,d+1,t),-1) for t in range(2)],high=0)
+    add([(idx(p,d,t),1) for t in range(2)]+[(idx(p,d-1,t),-1) for t in range(2)]+[(idx(p,d+2,t),-1) for t in range(2)],high=0)
+   if D>=3:
+    add([(idx(p,0,t),1) for t in range(2)]+[(idx(p,1,t),-1) for t in range(2)],high=0)
+    add([(idx(p,0,t),1) for t in range(2)]+[(idx(p,2,t),-1) for t in range(2)],high=0)
   if 'rest' not in relax:
-   for d in range(D-2):
-    add([(idx(p,d,s),1) for s in range(2)]+[(idx(p,d+1,s),-1) for s in range(2)]+[(idx(p,d+2,s),1) for s in range(2)],high=1)
+   for d in range(D-3):
+    for gap in (2,3):
+     add([(idx(p,d,t),1) for t in range(2)]+[(idx(p,d+1,t),-1) for t in range(2)]+[(idx(p,d+gap,t),1) for t in range(2)],high=1)
   if 'rotation' not in relax:
    for d in range(D-1):
     add([(idx(p,d,0),1),(idx(p,d+1,1),1)],high=1)
-   add([(idx(p,d,1),1),(idx(p,d+1,0),1)],high=1)
+    add([(idx(p,d,1),1),(idx(p,d+1,0),1)],high=1)
   excluded=all(days[d]['type']=='closed' or locks.get(f'{PEOPLE[p]}-{d+1}')=='W' for d in range(D)) and any(locks.get(f'{PEOPLE[p]}-{d+1}')=='W' for d in range(D))
   quota=0 if excluded else target
-  if 'quota' not in relax:add([(idx(p,d,s),1) for d in range(D) for s in range(2)],low=quota,high=quota)
+  if 'quota' not in relax:add([(idx(p,d,s),1) for d in range(D) for s in range(2)],low=quota)
   if PEOPLE[p]=='E' and 'special' not in relax:
    for d in range(D-3):add([(idx(p,t,1),1) for t in range(d,d+4)],high=3)
    for d in range(min(2,D)):add([(idx(p,d,0),1)],high=0)
@@ -75,12 +82,12 @@ def solve(payload, diagnostic=False, relax=None):
  if res.x is None:
   report=[]
   if diagnostic and res.status==2:
-   for group,label in [('blocks','maksymalnie 4 dni pracy'),('rest','dwa dni odpoczynku'),('rotation','jednolita zmiana w bloku'),('special','ograniczenia pracownika E'),('weekly','wybory tygodniowe'),('quota','dokładny nominał'),('staffing','obsada zmian')]:
+   for group,label in [('blocks','maksymalnie 4 dni pracy'),('rest','dwa dni odpoczynku'),('rotation','jednolita zmiana w bloku'),('special','ograniczenia pracownika E'),('weekly','wybory tygodniowe'),('quota','minimalny nominał'),('staffing','obsada zmian')]:
     probe=solve(payload,False,{group})
     report.append({'group':group,'label':label,'feasible':probe['ok'],'status':probe.get('status')})
-  return {'ok':False,'status':int(res.status),'diagnostics':report,'message':f'Nie znaleziono grafiku z dokładnie {target*12} h na aktywną osobę. Status solvera: {res.message}. '+('Diagnostyka: '+('; '.join(x['label']+(' — usunięcie tej jednej reguły pozwala znaleźć grafik' if x['feasible'] else ' — brak potwierdzenia, że sama ta reguła blokuje grafik') for x in report)) if report else 'Spróbuj diagnostyki.'),'days':days}
+  return {'ok':False,'status':int(res.status),'diagnostics':report,'message':f'Nie znaleziono grafiku z minimum {target*12} h na aktywną osobę. Status solvera: {res.message}. '+('Diagnostyka: '+('; '.join(x['label']+(' — usunięcie tej jednej reguły pozwala znaleźć grafik' if x['feasible'] else ' — brak potwierdzenia, że sama ta reguła blokuje grafik') for x in report)) if report else 'Spróbuj diagnostyki.'),'days':days}
  sched={PEOPLE[p]:[('6' if res.x[idx(p,d,0)]>.5 else '18' if res.x[idx(p,d,1)]>.5 else '') for d in range(D)] for p in range(9)}
- return {'ok':True,'schedule':sched,'days':days,'message':f'Grafik wygenerowany. Każdy aktywny pracownik ma dokładnie {target*12} h przy nominale {nominal} h. Sprawdź pozostałe zasady.'}
+ return {'ok':True,'schedule':sched,'days':days,'message':f'Grafik wygenerowany. Każdy aktywny pracownik ma co najmniej {target*12} h przy nominale {nominal} h. Sprawdź pozostałe zasady.'}
 def validate(payload):
  days=build_days(int(payload['year']),int(payload['month']),set(map(int,payload.get('closed',[]))))
  sched=payload['schedule'];issues=[];nominal=int(payload.get('nominal',176));target=max(0,math.ceil(nominal/12))
@@ -90,7 +97,7 @@ def validate(payload):
   worked=sum(v in ('6','18') for v in vals)
   excluded=all(days[d]['type']=='closed' or payload.get('locks',{}).get(f'{p}-{d+1}')=='W' for d in range(len(days))) and any(payload.get('locks',{}).get(f'{p}-{d+1}')=='W' for d in range(len(days)))
   expected=0 if excluded else target
-  if worked!=expected:issues.append(f'{p}: {worked*12} h, wymagane dokładnie {expected*12} h (nominał {nominal} h)')
+  if worked<expected:issues.append(f'{p}: {worked*12} h, wymagane minimum {expected*12} h (nominał {nominal} h)')
   for d,day in enumerate(days):
    if day['type']=='closed' and vals[d] in ('6','18'):issues.append(f'{p}, dzień {d+1}: praca w dniu zamkniętym')
    if day['type']=='sat' and vals[d]=='18':issues.append(f'{p}, dzień {d+1}: nocna zmiana w sobotę')
@@ -100,6 +107,7 @@ def validate(payload):
    if vals[d] not in ('6','18') or (d>0 and vals[d-1] in ('6','18')):continue
    run=0
    while d+run<len(days) and vals[d+run] in ('6','18'):run+=1
+   if d+run<len(days) and run<3 and d>0:issues.append(f'{p}: blok krótszy niż 3 dni od {d+1}')
    if d+run+1<len(days) and any(vals[t] in ('6','18') for t in range(d+run,min(d+run+2,len(days)))):issues.append(f'{p}: brak 2 dni wolnych od {d+1}')
    if len({v for v in vals[d:d+run] if v in ('6','18')})>1:issues.append(f'{p}: mieszane zmiany w bloku od {d+1}')
  for d,day in enumerate(days):
