@@ -57,13 +57,28 @@ def solve(payload, diagnostic=False, relax=None):
    # Początek bloku: po rozpoczęciu wymagane są co najmniej 3 dni pracy.
    # Granice miesiąca traktowane jako nieznana kontynuacja bloku.
    for k in range(1,L-2):
+    # Blok piątek-sobota jest dopuszczalny: niedziela go przerywa.
+    # Święto ustawowe wewnątrz bloku pozostaje neutralne.
     add(day_terms(k)+day_terms(k-1,-1)+day_terms(k+1,-1),high=0)
-    add(day_terms(k)+day_terms(k-1,-1)+day_terms(k+2,-1),high=0)
+    if days[active[k+2]]['weekday']!=6:
+     add(day_terms(k)+day_terms(k-1,-1)+day_terms(k+2,-1),high=0)
+   # Nie dopuszczamy rozpoczynania nowego bloku od samej soboty.
+   for k in range(1,L):
+    if days[active[k]]['weekday']==5:
+     add(day_terms(k)+day_terms(k-1,-1),high=0)
    # Nie znamy poprzedniego miesiąca: nie wymuszamy startu nowego
    # 3-dniowego bloku w pierwszym dniu miesiąca. Kontynuacja jest możliwa.
   if 'rest' not in relax:
-   for k in range(L-2):
-    add(day_terms(k)+day_terms(k+1,-1)+day_terms(k+2),high=1)
+   # Dwa dni odpoczynku liczymy kalendarzowo, również przez święta.
+   for d in range(D-2):
+    add([(idx(p,d,t),1) for t in range(2)]
+        +[(idx(p,d+1,t),-1) for t in range(2)]
+        +[(idx(p,d+2,t),1) for t in range(2)],high=1)
+   # Po pracującej sobocie wolna jest niedziela i poniedziałek.
+   for d in range(D-2):
+    if days[d]['weekday']==5:
+     add([(idx(p,d,t),1) for t in range(2)]
+         +[(idx(p,d+2,t),1) for t in range(2)],high=1)
   if 'rotation' not in relax:
    for k in range(L-1):
     d=active[k];n=active[k+1]
@@ -95,7 +110,7 @@ def solve(payload, diagnostic=False, relax=None):
  for r,terms in enumerate(rows):
   for j,v in terms:A[r,j]+=v
  c=np.zeros(N)
- res=milp(c,integrality=np.ones(N),bounds=Bounds(np.zeros(N),np.ones(N)),constraints=LinearConstraint(A.tocsr(),np.array(lo),np.array(hi)),options={'time_limit':20 if relax else 90})
+ res=milp(c,integrality=np.ones(N),bounds=Bounds(np.zeros(N),np.ones(N)),constraints=LinearConstraint(A.tocsr(),np.array(lo),np.array(hi)),options={'time_limit':20 if relax else 120})
  if res.x is None:
   report=[]
   if diagnostic and res.status==2:
@@ -120,6 +135,13 @@ def validate(payload):
    if day['type']=='sat' and vals[d]=='18':issues.append(f'{p}, dzień {d+1}: nocna zmiana w sobotę')
   active=block_days(int(payload['year']),int(payload['month']),days)
   seq=[vals[d] for d in active]
+  for d in range(len(vals)-2):
+   if vals[d] in ('6','18') and vals[d+1] not in ('6','18') and vals[d+2] in ('6','18'):
+    issues.append(f'{p}: tylko jeden dzień wolny między dniami {d+1} i {d+3}')
+   if days[d]['weekday']==5 and vals[d] in ('6','18') and vals[d+2] in ('6','18'):
+    issues.append(f'{p}: poniedziałek po sobocie {d+1} musi być wolny')
+  for d in range(len(vals)-1):
+   if vals[d]=='18' and vals[d+1]=='6':issues.append(f'{p}: niedozwolone przejście 18→6 w dniach {d+1}–{d+2}')
   for k in range(len(seq)-4):
    if all(v in ('6','18') for v in seq[k:k+5]):issues.append(f'{p}: ponad 4 dni pracy od {active[k]+1}')
   k=0
@@ -130,7 +152,9 @@ def validate(payload):
    start=k
    while k<len(seq) and seq[k] in ('6','18'):k+=1
    run=k-start
-   if run<3 and start>0 and k<len(seq):issues.append(f'{p}: blok krótszy niż 3 dni od {active[start]+1}')
+   end_is_saturday=days[active[k-1]]['weekday']==5
+   min_run=2 if end_is_saturday else 3
+   if run<min_run and start>0 and k<len(seq):issues.append(f'{p}: blok krótszy niż {min_run} dni od {active[start]+1}')
    if k+1<len(seq) and seq[k+1] in ('6','18'):issues.append(f'{p}: brak 2 dni wolnych po {active[k-1]+1}')
    if len(set(seq[start:k]))>1:issues.append(f'{p}: mieszane zmiany w bloku od {active[start]+1}')
  for d,day in enumerate(days):
