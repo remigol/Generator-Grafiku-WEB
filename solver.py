@@ -16,13 +16,14 @@ def build_days(year,month,closed):
   typ='closed' if dt.weekday()==6 or dt in hol or d in closed else ('sat' if dt.weekday()==5 else 'weekday')
   days.append({'day':d,'weekday':dt.weekday(),'type':typ})
  return days
-def solve(payload):
+def solve(payload, diagnostic=False, relax=None):
+ relax=set(relax or [])
  year=int(payload['year']);month=int(payload['month']);nominal=int(payload.get('nominal',176))
  locks=payload.get('locks',{});days=build_days(year,month,set(map(int,payload.get('closed',[]))))
  D=len(days);N=9*D*2;rows=[];lo=[];hi=[]
  target=max(0,math.ceil(nominal/12))
  capacity=sum(2 if day['type']=='sat' else 6 if day['type']=='weekday' else 0 for day in days)
- if 9*target>capacity:
+ if 9*target>capacity and 'quota' not in relax:
   return {'ok':False,'message':f'Nominał wymaga minimum {9*target} zmian (po {target} na osobę), ale maksymalna obsada miesiąca pozwala na {capacity}. Zmniejsz nominał lub zmień zasady obsady.','days':days}
  def idx(p,d,s):return (p*D+d)*2+s
  def add(terms,low=-np.inf,high=np.inf):rows.append(terms);lo.append(low);hi.append(high)
@@ -35,19 +36,22 @@ def solve(payload):
    if val in ('6','18','W'):
     if val=='W':add([(idx(p,d,s),1) for s in range(2)],high=0)
     else:add([(idx(p,d,0 if val=='6' else 1),1)],low=1)
-  for d in range(D-4):add([(idx(p,t,s),1) for t in range(d,d+5) for s in range(2)],high=4)
-  for d in range(D-2):
-   add([(idx(p,d,s),1) for s in range(2)]+[(idx(p,d+1,s),-1) for s in range(2)]+[(idx(p,d+2,s),1) for s in range(2)],high=1)
-  for d in range(D-1):
-   add([(idx(p,d,0),1),(idx(p,d+1,1),1)],high=1)
+  if 'blocks' not in relax:
+   for d in range(D-4):add([(idx(p,t,s),1) for t in range(d,d+5) for s in range(2)],high=4)
+  if 'rest' not in relax:
+   for d in range(D-2):
+    add([(idx(p,d,s),1) for s in range(2)]+[(idx(p,d+1,s),-1) for s in range(2)]+[(idx(p,d+2,s),1) for s in range(2)],high=1)
+  if 'rotation' not in relax:
+   for d in range(D-1):
+    add([(idx(p,d,0),1),(idx(p,d+1,1),1)],high=1)
    add([(idx(p,d,1),1),(idx(p,d+1,0),1)],high=1)
   excluded=all(days[d]['type']=='closed' or locks.get(f'{PEOPLE[p]}-{d+1}')=='W' for d in range(D)) and any(locks.get(f'{PEOPLE[p]}-{d+1}')=='W' for d in range(D))
   quota=0 if excluded else target
-  add([(idx(p,d,s),1) for d in range(D) for s in range(2)],low=quota,high=quota)
-  if PEOPLE[p]=='E':
+  if 'quota' not in relax:add([(idx(p,d,s),1) for d in range(D) for s in range(2)],low=quota,high=quota)
+  if PEOPLE[p]=='E' and 'special' not in relax:
    for d in range(D-3):add([(idx(p,t,1),1) for t in range(d,d+4)],high=3)
    for d in range(min(2,D)):add([(idx(p,d,0),1)],high=0)
- weekly=payload.get('weeklyShifts',{})
+ weekly={} if 'weekly' in relax else payload.get('weeklyShifts',{})
  for key,group in weekly.items():
   try: monday=datetime.date.fromisoformat(key)
   except ValueError: continue
@@ -60,15 +64,21 @@ def solve(payload):
  for d,day in enumerate(days):
   if day['type']=='closed':continue
   for s in ([0] if day['type']=='sat' else [0,1]):
-   add([(idx(p,d,s),1) for p in range(9)],low=2,high=2 if day['type']=='sat' else 3)
-   add([(idx(p,d,s),1) for p in range(6)],low=1)
-   add([(idx(p,d,s),1) for p in range(6,9)],high=2)
+   add([(idx(p,d,s),1) for p in range(9)],low=2 if 'staffing' not in relax else 1,high=2 if day['type']=='sat' else 3)
+   if 'staffing' not in relax:add([(idx(p,d,s),1) for p in range(6)],low=1)
+   if 'staffing' not in relax:add([(idx(p,d,s),1) for p in range(6,9)],high=2)
  A=lil_matrix((len(rows),N),dtype=float)
  for r,terms in enumerate(rows):
   for j,v in terms:A[r,j]+=v
  c=np.zeros(N)
- res=milp(c,integrality=np.ones(N),bounds=Bounds(np.zeros(N),np.ones(N)),constraints=LinearConstraint(A.tocsr(),np.array(lo),np.array(hi)),options={'time_limit':90})
- if res.x is None:return {'ok':False,'message':f'Nie znaleziono grafiku z dokładnie {target*12} h na aktywną osobę. Wynik solvera: {res.message}. Sprawdź ograniczenia i dni zamknięte.','days':days}
+ res=milp(c,integrality=np.ones(N),bounds=Bounds(np.zeros(N),np.ones(N)),constraints=LinearConstraint(A.tocsr(),np.array(lo),np.array(hi)),options={'time_limit':20 if relax else 90})
+ if res.x is None:
+  report=[]
+  if diagnostic and res.status==2:
+   for group,label in [('blocks','maksymalnie 4 dni pracy'),('rest','dwa dni odpoczynku'),('rotation','jednolita zmiana w bloku'),('special','ograniczenia pracownika E'),('weekly','wybory tygodniowe'),('quota','dokładny nominał'),('staffing','obsada zmian')]:
+    probe=solve(payload,False,{group})
+    report.append({'group':group,'label':label,'feasible':probe['ok'],'status':probe.get('status')})
+  return {'ok':False,'status':int(res.status),'diagnostics':report,'message':f'Nie znaleziono grafiku z dokładnie {target*12} h na aktywną osobę. Status solvera: {res.message}. '+('Diagnostyka: '+('; '.join(x['label']+(' — usunięcie tej jednej reguły pozwala znaleźć grafik' if x['feasible'] else ' — brak potwierdzenia, że sama ta reguła blokuje grafik') for x in report)) if report else 'Spróbuj diagnostyki.'),'days':days}
  sched={PEOPLE[p]:[('6' if res.x[idx(p,d,0)]>.5 else '18' if res.x[idx(p,d,1)]>.5 else '') for d in range(D)] for p in range(9)}
  return {'ok':True,'schedule':sched,'days':days,'message':f'Grafik wygenerowany. Każdy aktywny pracownik ma dokładnie {target*12} h przy nominale {nominal} h. Sprawdź pozostałe zasady.'}
 def validate(payload):
