@@ -41,71 +41,16 @@ def solve(payload):
   if PEOPLE[p]=='E':
    for d in range(D-3):add([(idx(p,t,1),1) for t in range(d,d+4)],high=3)
    for d in range(min(2,D)):add([(idx(p,d,0),1)],high=0)
- for d,day in enumerate(days):
-  if day['type']=='closed':continue
-  for s in ([0] if day['type']=='sat' else [0,1]):
-   add([(idx(p,d,s),1) for p in range(9)],low=2,high=2 if day['type']=='sat' else 3)
-   add([(idx(p,d,s),1) for p in range(6)],low=1)
-   add([(idx(p,d,s),1) for p in range(6,9)],high=2)
- A=lil_matrix((len(rows),N),dtype=float)
- for r,terms in enumerate(rows):
-  for j,v in terms:A[r,j]+=v
- c=np.array([1+.01*p+.0001*d+(.004 if s else 0) for p in range(9) for d in range(D) for s in range(2)])
- res=milp(c,integrality=np.ones(N),bounds=Bounds(np.zeros(N),np.ones(N)),constraints=LinearConstraint(A.tocsr(),np.array(lo),np.array(hi)),options={'time_limit':25,'mip_rel_gap':.04})
- if res.x is None:return {'ok':False,'message':'Nie znaleziono grafiku spełniającego ograniczenia','days':days}
- sched={PEOPLE[p]:[('6' if res.x[idx(p,d,0)]>.5 else '18' if res.x[idx(p,d,1)]>.5 else '') for d in range(D)] for p in range(9)}
- return {'ok':True,'schedule':sched,'days':days,'message':'Grafik wygenerowany; sprawdź równowagę zmian i godziny.'}
-def validate(payload):
- days=build_days(int(payload['year']),int(payload['month']),set(map(int,payload.get('closed',[]))))
- sched=payload['schedule'];issues=[]
- for p in PEOPLE:
-  vals=sched.get(p,[])
-  if len(vals)!=len(days):issues.append(f'{p}: niepełny grafik');continue
-  for d,day in enumerate(days):
-   if day['type']=='closed' and vals[d] in ('6','18'):issues.append(f'{p}, dzień {d+1}: praca w dniu zamkniętym')
-   if day['type']=='sat' and vals[d]=='18':issues.append(f'{p}, dzień {d+1}: nocna zmiana w sobotę')
-  for d in range(len(days)-4):
-   if all(vals[t] in ('6','18') for t in range(d,d+5)):issues.append(f'{p}: ponad 4 dni pracy od {d+1}')
-  for d in range(len(days)):
-   if vals[d] not in ('6','18') or (d>0 and vals[d-1] in ('6','18')):continue
-   run=0
-   while d+run<len(days) and vals[d+run] in ('6','18'):run+=1
-   if d+run+1<len(days) and any(vals[t] in ('6','18') for t in range(d+run,min(d+run+2,len(days)))):issues.append(f'{p}: brak 2 dni wolnych od {d+1}')
-   if len({v for v in vals[d:d+run] if v in ('6','18')})>1:issues.append(f'{p}: mieszane zmiany w bloku od {d+1}')
- for d,day in enumerate(days):
-  for shift in (['6'] if day['type']=='sat' else ['6','18'] if day['type']=='weekday' else []):
-   workers=[p for p in PEOPLE if len(sched.get(p,[]))>d and sched[p][d]==shift]
-   if len(workers)<2 or len(workers)>(2 if day['type']=='sat' else 3):issues.append(f'Dzień {d+1}, zmiana {shift}: nieprawidłowa obsada')
-   if not set(workers)&PROD:issues.append(f'Dzień {d+1}, zmiana {shift}: brak produkcji')
-   if len(set(workers)&PACK)>2:issues.append(f'Dzień {d+1}, zmiana {shift}: za dużo pakowania')
- return issues weekly=payload.get('weeklyShifts',{})
+ weekly=payload.get('weeklyShifts',{})
  for key,group in weekly.items():
-  try:monday=datetime.date.fromisoformat(key)
-  except ValueError:continue
+  try: monday=datetime.date.fromisoformat(key)
+  except ValueError: continue
   indices=[d for d in range(D) if monday<=datetime.date(year,month,d+1)<monday+datetime.timedelta(days=7)]
   for p in range(9):
    chosen=group.get(PEOPLE[p],'any')
    if chosen in ('6','18'):
     forbidden=1 if chosen=='6' else 0
-    for d in indices:add([(idx(p,d,forbidden),1)],high=0)
- for d,day in enumerate(days):
-   add([(idx(p,d,0),1),(idx(p,d,1),1)],high=1)
-   if day['type']=='closed':add([(idx(p,d,s),1) for s in range(2)],high=0)
-   if day['type']=='sat':add([(idx(p,d,1),1)],high=0)
-   val=locks.get(f'{PEOPLE[p]}-{d+1}')
-   if val in ('6','18','W'):
-    if val=='W':add([(idx(p,d,s),1) for s in range(2)],high=0)
-    else:add([(idx(p,d,0 if val=='6' else 1),1)],low=1)
-  for d in range(D-4):add([(idx(p,t,s),1) for t in range(d,d+5) for s in range(2)],high=4)
-  for d in range(D-2):
-   add([(idx(p,d,s),1) for s in range(2)]+[(idx(p,d+1,s),-1) for s in range(2)]+[(idx(p,d+2,s),1) for s in range(2)],high=1)
-  for d in range(D-1):
-   add([(idx(p,d,0),1),(idx(p,d+1,1),1)],high=1)
-   add([(idx(p,d,1),1),(idx(p,d+1,0),1)],high=1)
-  add([(idx(p,d,s),1) for d in range(D) for s in range(2)],high=max(1,(nominal+24)//12))
-  if PEOPLE[p]=='E':
-   for d in range(D-3):add([(idx(p,t,1),1) for t in range(d,d+4)],high=3)
-   for d in range(min(2,D)):add([(idx(p,d,0),1)],high=0)
+    for d in indices: add([(idx(p,d,forbidden),1)],high=0)
  for d,day in enumerate(days):
   if day['type']=='closed':continue
   for s in ([0] if day['type']=='sat' else [0,1]):
@@ -143,79 +88,16 @@ def validate(payload):
    if len(workers)<2 or len(workers)>(2 if day['type']=='sat' else 3):issues.append(f'Dzień {d+1}, zmiana {shift}: nieprawidłowa obsada')
    if not set(workers)&PROD:issues.append(f'Dzień {d+1}, zmiana {shift}: brak produkcji')
    if len(set(workers)&PACK)>2:issues.append(f'Dzień {d+1}, zmiana {shift}: za dużo pakowania')
- return issues for key,group in payload.get('weeklyShifts',{}).items():
-  try:monday=datetime.date.fromisoformat(key)
-  except ValueError:issues.append('Nieprawidłowy tydzień: '+key);continue
+ for key,group in payload.get('weeklyShifts',{}).items():
+  try: monday=datetime.date.fromisoformat(key)
+  except ValueError:
+   issues.append('Nieprawidłowy tydzień: '+key)
+   continue
   indices=[d for d in range(len(days)) if monday<=datetime.date(int(payload['year']),int(payload['month']),d+1)<monday+datetime.timedelta(days=7)]
   for p in PEOPLE:
    chosen=group.get(p,'any')
-   if chosen not in ('6','18'):continue
+   if chosen not in ('6','18'): continue
    for d in indices:
     if d<len(sched.get(p,[])) and sched[p][d] in ('6','18') and sched[p][d]!=chosen:
      issues.append(f'{p}, dzień {d+1}: zmiana {sched[p][d]} niezgodna z tygodniowym wyborem {chosen}')
- return issues weekly=payload.get('weeklyShifts',{})
- for key,group in weekly.items():
-  try:monday=datetime.date.fromisoformat(key)
-  except ValueError:continue
-  indices=[d for d in range(D) if monday<=datetime.date(year,month,d+1)<monday+datetime.timedelta(days=7)]
-  for p in range(9):
-   chosen=group.get(PEOPLE[p],'any')
-   if chosen in ('6','18'):
-    forbidden=1 if chosen=='6' else 0
-    for d in indices:add([(idx(p,d,forbidden),1)],high=0)
- for d,day in enumerate(days):
-   add([(idx(p,d,0),1),(idx(p,d,1),1)],high=1)
-   if day['type']=='closed':add([(idx(p,d,s),1) for s in range(2)],high=0)
-   if day['type']=='sat':add([(idx(p,d,1),1)],high=0)
-   val=locks.get(f'{PEOPLE[p]}-{d+1}')
-   if val in ('6','18','W'):
-    if val=='W':add([(idx(p,d,s),1) for s in range(2)],high=0)
-    else:add([(idx(p,d,0 if val=='6' else 1),1)],low=1)
-  for d in range(D-4):add([(idx(p,t,s),1) for t in range(d,d+5) for s in range(2)],high=4)
-  for d in range(D-2):
-   add([(idx(p,d,s),1) for s in range(2)]+[(idx(p,d+1,s),-1) for s in range(2)]+[(idx(p,d+2,s),1) for s in range(2)],high=1)
-  for d in range(D-1):
-   add([(idx(p,d,0),1),(idx(p,d+1,1),1)],high=1)
-   add([(idx(p,d,1),1),(idx(p,d+1,0),1)],high=1)
-  add([(idx(p,d,s),1) for d in range(D) for s in range(2)],high=max(1,(nominal+24)//12))
-  if PEOPLE[p]=='E':
-   for d in range(D-3):add([(idx(p,t,1),1) for t in range(d,d+4)],high=3)
-   for d in range(min(2,D)):add([(idx(p,d,0),1)],high=0)
- for d,day in enumerate(days):
-  if day['type']=='closed':continue
-  for s in ([0] if day['type']=='sat' else [0,1]):
-   add([(idx(p,d,s),1) for p in range(9)],low=2,high=2 if day['type']=='sat' else 3)
-   add([(idx(p,d,s),1) for p in range(6)],low=1)
-   add([(idx(p,d,s),1) for p in range(6,9)],high=2)
- A=lil_matrix((len(rows),N),dtype=float)
- for r,terms in enumerate(rows):
-  for j,v in terms:A[r,j]+=v
- c=np.array([1+.01*p+.0001*d+(.004 if s else 0) for p in range(9) for d in range(D) for s in range(2)])
- res=milp(c,integrality=np.ones(N),bounds=Bounds(np.zeros(N),np.ones(N)),constraints=LinearConstraint(A.tocsr(),np.array(lo),np.array(hi)),options={'time_limit':25,'mip_rel_gap':.04})
- if res.x is None:return {'ok':False,'message':'Nie znaleziono grafiku spełniającego ograniczenia','days':days}
- sched={PEOPLE[p]:[('6' if res.x[idx(p,d,0)]>.5 else '18' if res.x[idx(p,d,1)]>.5 else '') for d in range(D)] for p in range(9)}
- return {'ok':True,'schedule':sched,'days':days,'message':'Grafik wygenerowany; sprawdź równowagę zmian i godziny.'}
-def validate(payload):
- days=build_days(int(payload['year']),int(payload['month']),set(map(int,payload.get('closed',[]))))
- sched=payload['schedule'];issues=[]
- for p in PEOPLE:
-  vals=sched.get(p,[])
-  if len(vals)!=len(days):issues.append(f'{p}: niepełny grafik');continue
-  for d,day in enumerate(days):
-   if day['type']=='closed' and vals[d] in ('6','18'):issues.append(f'{p}, dzień {d+1}: praca w dniu zamkniętym')
-   if day['type']=='sat' and vals[d]=='18':issues.append(f'{p}, dzień {d+1}: nocna zmiana w sobotę')
-  for d in range(len(days)-4):
-   if all(vals[t] in ('6','18') for t in range(d,d+5)):issues.append(f'{p}: ponad 4 dni pracy od {d+1}')
-  for d in range(len(days)):
-   if vals[d] not in ('6','18') or (d>0 and vals[d-1] in ('6','18')):continue
-   run=0
-   while d+run<len(days) and vals[d+run] in ('6','18'):run+=1
-   if d+run+1<len(days) and any(vals[t] in ('6','18') for t in range(d+run,min(d+run+2,len(days)))):issues.append(f'{p}: brak 2 dni wolnych od {d+1}')
-   if len({v for v in vals[d:d+run] if v in ('6','18')})>1:issues.append(f'{p}: mieszane zmiany w bloku od {d+1}')
- for d,day in enumerate(days):
-  for shift in (['6'] if day['type']=='sat' else ['6','18'] if day['type']=='weekday' else []):
-   workers=[p for p in PEOPLE if len(sched.get(p,[]))>d and sched[p][d]==shift]
-   if len(workers)<2 or len(workers)>(2 if day['type']=='sat' else 3):issues.append(f'Dzień {d+1}, zmiana {shift}: nieprawidłowa obsada')
-   if not set(workers)&PROD:issues.append(f'Dzień {d+1}, zmiana {shift}: brak produkcji')
-   if len(set(workers)&PACK)>2:issues.append(f'Dzień {d+1}, zmiana {shift}: za dużo pakowania')
  return issues
