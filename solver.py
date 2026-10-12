@@ -1,4 +1,4 @@
-import calendar,datetime,numpy as np
+import calendar,datetime,math,numpy as np
 from scipy.optimize import milp,Bounds,LinearConstraint
 from scipy.sparse import lil_matrix
 PEOPLE=list('ABCDEFGHI');PROD=set('ABCDEF');PACK=set('GHI')
@@ -20,6 +20,10 @@ def solve(payload):
  year=int(payload['year']);month=int(payload['month']);nominal=int(payload.get('nominal',176))
  locks=payload.get('locks',{});days=build_days(year,month,set(map(int,payload.get('closed',[]))))
  D=len(days);N=9*D*2;rows=[];lo=[];hi=[]
+ target=max(0,math.ceil(nominal/12))
+ capacity=sum(2 if day['type']=='sat' else 6 if day['type']=='weekday' else 0 for day in days)
+ if 9*target>capacity:
+  return {'ok':False,'message':f'Nominał wymaga minimum {9*target} zmian (po {target} na osobę), ale maksymalna obsada miesiąca pozwala na {capacity}. Zmniejsz nominał lub zmień zasady obsady.','days':days}
  def idx(p,d,s):return (p*D+d)*2+s
  def add(terms,low=-np.inf,high=np.inf):rows.append(terms);lo.append(low);hi.append(high)
  for p in range(9):
@@ -37,7 +41,7 @@ def solve(payload):
   for d in range(D-1):
    add([(idx(p,d,0),1),(idx(p,d+1,1),1)],high=1)
    add([(idx(p,d,1),1),(idx(p,d+1,0),1)],high=1)
-  add([(idx(p,d,s),1) for d in range(D) for s in range(2)],high=max(1,(nominal+24)//12))
+  add([(idx(p,d,s),1) for d in range(D) for s in range(2)],low=target,high=target+2)
   if PEOPLE[p]=='E':
    for d in range(D-3):add([(idx(p,t,1),1) for t in range(d,d+4)],high=3)
    for d in range(min(2,D)):add([(idx(p,d,0),1)],high=0)
@@ -61,16 +65,19 @@ def solve(payload):
  for r,terms in enumerate(rows):
   for j,v in terms:A[r,j]+=v
  c=np.array([1+.01*p+.0001*d+(.004 if s else 0) for p in range(9) for d in range(D) for s in range(2)])
- res=milp(c,integrality=np.ones(N),bounds=Bounds(np.zeros(N),np.ones(N)),constraints=LinearConstraint(A.tocsr(),np.array(lo),np.array(hi)),options={'time_limit':25,'mip_rel_gap':.04})
- if res.x is None:return {'ok':False,'message':'Nie znaleziono grafiku spełniającego ograniczenia','days':days}
+ res=milp(c,integrality=np.ones(N),bounds=Bounds(np.zeros(N),np.ones(N)),constraints=LinearConstraint(A.tocsr(),np.array(lo),np.array(hi)),options={'time_limit':45,'mip_rel_gap':.02})
+ if res.x is None:return {'ok':False,'message':f'Nie znaleziono grafiku zapewniającego każdemu co najmniej {target*12} h przy obecnych ograniczeniach. Zmień ustawienia lub ręczne blokady.','days':days}
  sched={PEOPLE[p]:[('6' if res.x[idx(p,d,0)]>.5 else '18' if res.x[idx(p,d,1)]>.5 else '') for d in range(D)] for p in range(9)}
- return {'ok':True,'schedule':sched,'days':days,'message':'Grafik wygenerowany; sprawdź równowagę zmian i godziny.'}
+ return {'ok':True,'schedule':sched,'days':days,'message':f'Grafik wygenerowany. Każdy pracownik ma minimum {target*12} h przy nominale {nominal} h. Sprawdź pozostałe zasady.'}
 def validate(payload):
  days=build_days(int(payload['year']),int(payload['month']),set(map(int,payload.get('closed',[]))))
- sched=payload['schedule'];issues=[]
+ sched=payload['schedule'];issues=[];nominal=int(payload.get('nominal',176));target=max(0,math.ceil(nominal/12))
  for p in PEOPLE:
   vals=sched.get(p,[])
   if len(vals)!=len(days):issues.append(f'{p}: niepełny grafik');continue
+  worked=sum(v in ('6','18') for v in vals)
+  if worked<target:issues.append(f'{p}: {worked*12} h, wymagane minimum {target*12} h (nominał {nominal} h)')
+  if worked>target+2:issues.append(f'{p}: {worked*12} h, przekroczony limit wyrównawczy {(target+2)*12} h')
   for d,day in enumerate(days):
    if day['type']=='closed' and vals[d] in ('6','18'):issues.append(f'{p}, dzień {d+1}: praca w dniu zamkniętym')
    if day['type']=='sat' and vals[d]=='18':issues.append(f'{p}, dzień {d+1}: nocna zmiana w sobotę')
