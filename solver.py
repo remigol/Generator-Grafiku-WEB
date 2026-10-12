@@ -45,9 +45,8 @@ def solve(payload, diagnostic=False, relax=None):
     add([(idx(p,0,t),1) for t in range(2)]+[(idx(p,1,t),-1) for t in range(2)],high=0)
     add([(idx(p,0,t),1) for t in range(2)]+[(idx(p,2,t),-1) for t in range(2)],high=0)
   if 'rest' not in relax:
-   for d in range(D-3):
-    for gap in (2,3):
-     add([(idx(p,d,t),1) for t in range(2)]+[(idx(p,d+1,t),-1) for t in range(2)]+[(idx(p,d+gap,t),1) for t in range(2)],high=1)
+   for d in range(D-2):
+    add([(idx(p,d,t),1) for t in range(2)]+[(idx(p,d+1,t),-1) for t in range(2)]+[(idx(p,d+2,t),1) for t in range(2)],high=1)
   if 'rotation' not in relax:
    for d in range(D-1):
     add([(idx(p,d,0),1),(idx(p,d+1,1),1)],high=1)
