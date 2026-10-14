@@ -122,6 +122,7 @@ class SolverTests(unittest.TestCase):
             rest_issues=[x for x in issues if "tylko jeden dzień wolny" in x or "poniedziałek po sobocie" in x]
             other=[x for x in issues if x not in rest_issues]
             self.assertEqual(other,[])
+            self.assertEqual(validate({**payload,"schedule":sched},allow_one_day_rest=True,allow_shortfall=True),[])
             daily=[];weekly_bad=[]
             for p in PEOPLE:
                 shifts=[]
