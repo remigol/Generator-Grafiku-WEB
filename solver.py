@@ -62,6 +62,7 @@ def solve(payload, diagnostic=False, relax=None):
    # Pojedynczy dzien jest niedozwolony wewnatrz miesiaca;
    # na granicy miesiaca nie znamy sasiedniego grafiku.
    for d in range(1,D-1):
+    if 'singletons' in relax:break
     if days[d]['type']=='closed':continue
     add([(idx(p,d,t),1) for t in range(2)]
         +[(idx(p,d-1,t),-1) for t in range(2)]
