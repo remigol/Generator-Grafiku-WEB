@@ -7,6 +7,22 @@ from solver import solve, validate, build_days, PEOPLE
 class SolverTests(unittest.TestCase):
     def test_syntax(self):
         ast.parse(Path("solver.py").read_text(encoding="utf-8"))
+    def test_weekly_full_leave_validation(self):
+        data={"year":2026,"month":11,"nominal":160,"closed":[],"locks":{},"weeklyShifts":{"2026-11-02":{"A":"W"}}}
+        schedule={p:[""]*30 for p in PEOPLE}
+        schedule["A"][1]="6"
+        issues=validate({**data,"schedule":schedule},allow_shortfall=True)
+        self.assertTrue(any("A, dzień 2:" in x and "wyborem W" in x for x in issues))
+        schedule["A"][1]=""
+        issues=validate({**data,"schedule":schedule},allow_shortfall=True)
+        self.assertFalse(any("wyborem W" in x for x in issues))
+    def test_weekly_full_leave_solver(self):
+        data={"year":2026,"month":11,"nominal":160,"closed":[],"locks":{},"weeklyShifts":{"2026-11-02":{"A":"W"}}}
+        result=solve(data,relax={"one_day_rest"})
+        print("WEEK_LEAVE",result.get("ok"),result.get("message"),flush=True)
+        if result.get("ok"):
+            self.assertTrue(all(result["schedule"]["A"][d]=="" for d in range(1,8)))
+            self.assertFalse(any("wyborem W" in x for x in validate({**data,"schedule":result["schedule"]},allow_one_day_rest=True)))
     def test_calendar_november(self):
         days=build_days(2026,11,set())
         self.assertEqual(len(days),30)
