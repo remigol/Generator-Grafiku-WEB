@@ -112,6 +112,27 @@ def solve(payload, diagnostic=False, relax=None):
   for j,v in terms:A[r,j]+=v
  c=np.array([(-1.0+0.00001*(d%7)) if 'fallback' in relax else 0.001*(d%7) for p in range(9) for d in range(D) for shift in range(2)])
  res=milp(c,integrality=np.ones(N),bounds=Bounds(np.zeros(N),np.ones(N)),constraints=LinearConstraint(A.tocsr(),np.array(lo),np.array(hi)),options={'time_limit':20 if relax else 120})
+ # Diagnostycznie: przy dopuszczonym jednym dniu wolnym minimalizuj
+ # liczbe takich przerw, zachowujac wszystkie pozostale ograniczenia.
+ if 'one_day_rest' in relax and 'fallback' not in relax and res.x is not None:
+  gaps=9*(D-2);B=lil_matrix((len(rows)+gaps,N+gaps),dtype=float)
+  B[:len(rows),:N]=A
+  lower=np.r_[np.array(lo),np.full(gaps,-np.inf)]
+  upper=np.r_[np.array(hi),np.full(gaps,1.0)]
+  for p in range(9):
+   for d in range(D-2):
+    k=p*(D-2)+d;r=len(rows)+k
+    for t in range(2):
+     B[r,idx(p,d,t)]=1
+     B[r,idx(p,d+1,t)]=-1
+     B[r,idx(p,d+2,t)]=1
+    B[r,N+k]=-1
+  objective=np.r_[np.zeros(N),np.ones(gaps)]
+  best=milp(objective,integrality=np.ones(N+gaps),
+            bounds=Bounds(np.zeros(N+gaps),np.ones(N+gaps)),
+            constraints=LinearConstraint(B.tocsr(),lower,upper),
+            options={'time_limit':60})
+  if best.x is not None:res=best
  # Drugi etap: przy zachowaniu uzyskanej liczby zmian minimalizuj
  # największy niedobór pojedynczego pracownika (minimax).
  if 'fallback' in relax and res.x is not None:
@@ -149,7 +170,8 @@ def solve(payload, diagnostic=False, relax=None):
   return {'ok':False,'status':int(res.status),'diagnostics':report,'message':f'Nie znaleziono grafiku z dokładnie {target*12} h na osobę. Status solvera: {res.message}. '+('Diagnostyka: '+('; '.join(x['label']+(' — usunięcie tej jednej reguły pozwala znaleźć grafik' if x['feasible'] else ' — brak potwierdzenia, że sama ta reguła blokuje grafik') for x in report)) if report else 'Spróbuj diagnostyki.'),'days':days}
  sched={PEOPLE[p]:[('6' if res.x[idx(p,d,0)]>.5 else '18' if res.x[idx(p,d,1)]>.5 else '') for d in range(D)] for p in range(9)}
  shortfalls=[{'employee':p,'hours':12*sum(x in ('6','18') for x in sched[p]),'required':target*12,'missing':12*(target-sum(x in ('6','18') for x in sched[p]))} for p in PEOPLE]
- return {'ok':True,'schedule':sched,'days':days,'partial':'fallback' in relax,'shortfalls':shortfalls,'message':f'Grafik wygenerowany. Wymagany wymiar: {target*12} h na osobę (nominał {nominal} h).'}
+ one_day_breaks=sum(sched[p][d] in ('6','18') and sched[p][d+1]=='' and sched[p][d+2] in ('6','18') for p in PEOPLE for d in range(D-2))
+ return {'ok':True,'schedule':sched,'days':days,'one_day_breaks':one_day_breaks,'partial':'fallback' in relax,'shortfalls':shortfalls,'message':f'Grafik wygenerowany. Wymagany wymiar: {target*12} h na osobę (nominał {nominal} h).'}
 def validate(payload,allow_shortfall=False):
  days=build_days(int(payload['year']),int(payload['month']),set(map(int,payload.get('closed',[]))))
  sched=payload['schedule'];issues=[];nominal=int(payload.get('nominal',176));target=max(0,math.ceil(nominal/12))
