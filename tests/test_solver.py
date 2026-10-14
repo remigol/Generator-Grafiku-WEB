@@ -45,6 +45,20 @@ class SolverTests(unittest.TestCase):
                 self.assertEqual(issues,[])
                 return
         self.fail("Nie znaleziono pełnego grafiku nawet dla 8 zmian na osobę")
+    def test_single_day_blocks_november_168(self):
+        data={"year":2026,"month":11,"nominal":168,"closed":[],"locks":{},"weeklyShifts":{}}
+        result=solve(data,relax={"singletons"})
+        print("SINGLETONS_168",result.get("ok"),result.get("status"),result.get("message"),flush=True)
+        if result.get("ok"):
+            schedule=result["schedule"]
+            issues=validate({**data,"schedule":schedule})
+            singleton_issues=[i for i in issues if "pojedynczy dzień pracy" in i]
+            other_issues=[i for i in issues if i not in singleton_issues]
+            self.assertEqual(other_issues,[])
+            self.assertTrue(all(sum(v in ("6","18") for v in schedule[p])==14 for p in PEOPLE))
+            print("SINGLETONS_COUNT",len(singleton_issues),flush=True)
+        else:
+            self.assertIn(result.get("status"),(1,2))
     def test_validator_rejects_invalid(self):
         data={"year":2026,"month":11,"nominal":160,"schedule":{p:[""]*30 for p in PEOPLE}}
         issues=validate(data)
