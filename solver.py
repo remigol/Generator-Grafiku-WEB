@@ -98,6 +98,8 @@ def solve(payload, diagnostic=False, relax=None):
   indices=[d for d in range(D) if monday<=datetime.date(year,month,d+1)<monday+datetime.timedelta(days=7)]
   for p in range(9):
    chosen=group.get(PEOPLE[p],'any')
+   if chosen=='W':
+    for d in indices:add([(idx(p,d,0),1),(idx(p,d,1),1)],high=0)
    if chosen in ('6','18'):
     forbidden=1 if chosen=='6' else 0
     for d in indices: add([(idx(p,d,forbidden),1)],high=0)
@@ -217,8 +219,8 @@ def validate(payload,allow_shortfall=False,allow_one_day_rest=False):
   indices=[d for d in range(len(days)) if monday<=datetime.date(int(payload['year']),int(payload['month']),d+1)<monday+datetime.timedelta(days=7)]
   for p in PEOPLE:
    chosen=group.get(p,'any')
-   if chosen not in ('6','18'): continue
+   if chosen not in ('6','18','W'): continue
    for d in indices:
-    if d<len(sched.get(p,[])) and sched[p][d] in ('6','18') and sched[p][d]!=chosen:
+    if d<len(sched.get(p,[])) and sched[p][d] in ('6','18') and (chosen=='W' or sched[p][d]!=chosen):
      issues.append(f'{p}, dzień {d+1}: zmiana {sched[p][d]} niezgodna z tygodniowym wyborem {chosen}')
  return issues
