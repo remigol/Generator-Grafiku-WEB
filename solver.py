@@ -30,12 +30,12 @@ def solve(payload, diagnostic=False, relax=None):
  D=len(days);N=9*D*2;rows=[];lo=[];hi=[]
  target=max(0,math.ceil(nominal/12))
  capacity=sum(2 if day['type']=='sat' else 6 if day['type']=='weekday' else 0 for day in days)
- if 9*target>capacity and 'quota' not in relax:
+ if 9*target>capacity and 'quota' not in relax and 'fallback' not in relax:
   return {'ok':False,'message':f'Nominał wymaga dokładnie {9*target} zmian (po {target} na osobę), ale maksymalna obsada miesiąca pozwala na {capacity}. Zmniejsz nominał lub zmień zasady obsady.','days':days}
  # Wstepna kontrola liczby dostepnych miejsc na zmiany nocne i dzienne.
  weekday_count=sum(day['type']=='weekday' for day in days)
  sat_count=sum(day['type']=='sat' for day in days)
- if 'quota' not in relax and 'balance' not in relax:
+ if 'quota' not in relax and 'balance' not in relax and 'fallback' not in relax:
   min_nights=max(0,math.ceil((target-4)/2))
   if 9*min_nights>3*weekday_count:
    return {'ok':False,'status':2,'message':f'Za malo miejsc nocnych: potrzeba co najmniej {9*min_nights}, dostepnych maksymalnie {3*weekday_count}.','days':days}
@@ -85,7 +85,8 @@ def solve(payload, diagnostic=False, relax=None):
     add([(idx(p,d,0),1),(idx(p,n,1),1)],high=1)
     add([(idx(p,d,1),1),(idx(p,n,0),1)],high=1)
   quota=target
-  if 'quota' not in relax:add([(idx(p,d,s),1) for d in range(D) for s in range(2)],low=quota,high=quota)
+  if 'quota' not in relax and 'fallback' not in relax:add([(idx(p,d,s),1) for d in range(D) for s in range(2)],low=quota,high=quota)
+  if 'fallback' in relax:add([(idx(p,d,s),1) for d in range(D) for s in range(2)],high=quota)
   if 'balance' not in relax:
    # Roznica miedzy zmianami 6 i 18 nie moze przekroczyc 4.
    add([(idx(p,d,0),1) for d in range(D)]+[(idx(p,d,1),-1) for d in range(D)],low=-4,high=4)
@@ -108,9 +109,16 @@ def solve(payload, diagnostic=False, relax=None):
  A=lil_matrix((len(rows),N),dtype=float)
  for r,terms in enumerate(rows):
   for j,v in terms:A[r,j]+=v
- c=np.array([0.001*(d%7) for p in range(9) for d in range(D) for shift in range(2)])
+ c=np.array([(-1.0+0.00001*(d%7)) if 'fallback' in relax else 0.001*(d%7) for p in range(9) for d in range(D) for shift in range(2)])
  res=milp(c,integrality=np.ones(N),bounds=Bounds(np.zeros(N),np.ones(N)),constraints=LinearConstraint(A.tocsr(),np.array(lo),np.array(hi)),options={'time_limit':20 if relax else 120})
  if res.x is None:
+  if not relax and res.status==2 and not diagnostic:
+   alternative=solve(payload,False,{'fallback'})
+   if alternative.get('ok'):
+    alternative['partial']=True
+    alternative['status']=2
+    alternative['message']='Pełny nominał jest niewykonalny. Wygenerowano grafik z brakami godzinowymi, zachowując pozostałe zasady.'
+    return alternative
   report=[]
   if diagnostic and res.status==2:
    for group,label in [('blocks','maksymalnie 4 dni pracy'),('rest','dwa dni odpoczynku'),('rotation','jednolita zmiana w bloku'),('balance','równowaga zmian 6/18'),('weekly','wybory tygodniowe'),('quota','minimalny nominał'),('staffing','obsada zmian')]:
@@ -118,8 +126,9 @@ def solve(payload, diagnostic=False, relax=None):
     report.append({'group':group,'label':label,'feasible':probe['ok'],'status':probe.get('status')})
   return {'ok':False,'status':int(res.status),'diagnostics':report,'message':f'Nie znaleziono grafiku z dokładnie {target*12} h na osobę. Status solvera: {res.message}. '+('Diagnostyka: '+('; '.join(x['label']+(' — usunięcie tej jednej reguły pozwala znaleźć grafik' if x['feasible'] else ' — brak potwierdzenia, że sama ta reguła blokuje grafik') for x in report)) if report else 'Spróbuj diagnostyki.'),'days':days}
  sched={PEOPLE[p]:[('6' if res.x[idx(p,d,0)]>.5 else '18' if res.x[idx(p,d,1)]>.5 else '') for d in range(D)] for p in range(9)}
- return {'ok':True,'schedule':sched,'days':days,'message':f'Grafik wygenerowany. Każdy aktywny pracownik ma dokładnie {target*12} h przy nominale {nominal} h. Sprawdź pozostałe zasady.'}
-def validate(payload):
+ shortfalls=[{'employee':p,'hours':12*sum(x in ('6','18') for x in sched[p]),'required':target*12,'missing':12*(target-sum(x in ('6','18') for x in sched[p]))} for p in PEOPLE]
+ return {'ok':True,'schedule':sched,'days':days,'partial':'fallback' in relax,'shortfalls':shortfalls,'message':f'Grafik wygenerowany. Wymagany wymiar: {target*12} h na osobę (nominał {nominal} h).'}
+def validate(payload,allow_shortfall=False):
  days=build_days(int(payload['year']),int(payload['month']),set(map(int,payload.get('closed',[]))))
  sched=payload['schedule'];issues=[];nominal=int(payload.get('nominal',176));target=max(0,math.ceil(nominal/12))
  for p in PEOPLE:
@@ -127,7 +136,7 @@ def validate(payload):
   if len(vals)!=len(days):issues.append(f'{p}: niepełny grafik');continue
   worked=sum(v in ('6','18') for v in vals)
   expected=target
-  if worked!=expected:issues.append(f'{p}: {worked*12} h, wymagane dokładnie {expected*12} h (nominał {nominal} h)')
+  if worked!=expected and not (allow_shortfall and worked<expected):issues.append(f'{p}: {worked*12} h, wymagane dokładnie {expected*12} h (nominał {nominal} h)')
   if abs(vals.count('6')-vals.count('18'))>4:issues.append(f'{p}: różnica zmian 6/18 przekracza 4')
   for d,day in enumerate(days):
    if day['type']=='closed' and vals[d] in ('6','18'):issues.append(f'{p}, dzień {d+1}: praca w dniu zamkniętym')
