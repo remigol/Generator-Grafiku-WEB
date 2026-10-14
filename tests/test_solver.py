@@ -30,6 +30,9 @@ class SolverTests(unittest.TestCase):
             for i in range(1,29):
                 self.assertFalse(v[i] in ("6","18") and v[i-1] not in ("6","18") and v[i+1] not in ("6","18"))
         self.assertGreater(sum(x["missing"] for x in result["shortfalls"]),0)
+        self.assertGreaterEqual(sum(x["hours"] for x in result["shortfalls"]),117*12)
+        self.assertLessEqual(max(x["missing"] for x in result["shortfalls"]),24)
+        print("FAIRNESS_SHORTFALLS",{x["employee"]:x["missing"] for x in result["shortfalls"]},flush=True)
         print("NOVEMBER_DISTRIBUTION",{p:(sched[p].count("6"),sched[p].count("18")) for p in PEOPLE},flush=True)
     def test_max_equal_shifts_november(self):
         for shifts in range(14,7,-1):
