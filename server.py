@@ -10,11 +10,11 @@ class Handler(SimpleHTTPRequestHandler):
    n=int(self.headers.get('Content-Length','0'))
    if n>200000:raise ValueError('Za duży formularz')
    data=json.loads(self.rfile.read(n));path=self.path.split('?')[0]
-   if path=='/api/generate':return self.json(solve(data))
+   if path=='/api/generate':return self.json(solve(data,relax={'one_day_rest'} if data.get('oneDayRestTest') else None))
    if path=='/api/diagnose':return self.json(solve(data,diagnostic=True))
-   if path=='/api/validate':return self.json({'issues':validate(data)})
+   if path=='/api/validate':return self.json({'issues':validate(data,allow_shortfall=bool(data.get('partial')),allow_one_day_rest=bool(data.get('oneDayRestTest'))),'shortfalls':[{'employee':p,'hours':12*sum(x in ('6','18') for x in data['schedule'][p]),'missing':max(0,12*__import__('math').ceil(int(data.get('nominal',176))/12)-12*sum(x in ('6','18') for x in data['schedule'][p]))} for p in PEOPLE]})
    if path=='/api/export':
-    issues=validate(data)
+    issues=validate(data,allow_shortfall=bool(data.get('partial')))
     if issues:return self.json({'error':'Grafik narusza zasady','issues':issues},422)
     return self.export(data)
    return self.json({'error':'Nieznana ścieżka'},404)
@@ -41,7 +41,7 @@ class Handler(SimpleHTTPRequestHandler):
     for row in ws.iter_rows(min_col=i,max_col=i):
      row[0].fill=PatternFill('solid',fgColor='F2E8FA' if day['type']=='closed' else 'FFF0C9')
   info=wb.create_sheet('Informacje')
-  for row in [['Generator Grafiku WEB','v1'],['Miesiąc',str(data['month'])+'/'+str(data['year'])],['Nominał',int(data.get('nominal',176))],['Uwaga','Format importu ShiftMate wymaga potwierdzenia']]:info.append(row)
+  for row in [['Generator Grafiku WEB','v1'],['Miesiąc',str(data['month'])+'/'+str(data['year'])],['Nominał',int(data.get('nominal',176))],['Uwaga','Grafik z niedoborami godzin' if data.get('partial') else 'Format importu ShiftMate wymaga potwierdzenia']]:info.append(row)
   import io
   out=io.BytesIO();wb.save(out);b=out.getvalue()
   self.send_response(200);self.send_header('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');self.send_header('Content-Disposition','attachment; filename="Grafik_%s_%02d.xlsx"'%(data['year'],int(data['month'])));self.send_header('Content-Length',str(len(b)));self.end_headers();self.wfile.write(b)

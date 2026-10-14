@@ -30,8 +30,18 @@ def solve(payload, diagnostic=False, relax=None):
  D=len(days);N=9*D*2;rows=[];lo=[];hi=[]
  target=max(0,math.ceil(nominal/12))
  capacity=sum(2 if day['type']=='sat' else 6 if day['type']=='weekday' else 0 for day in days)
- if 9*target>capacity and 'quota' not in relax:
-  return {'ok':False,'message':f'Nominał wymaga minimum {9*target} zmian (po {target} na osobę), ale maksymalna obsada miesiąca pozwala na {capacity}. Zmniejsz nominał lub zmień zasady obsady.','days':days}
+ if 9*target>capacity and 'quota' not in relax and 'fallback' not in relax:
+  return {'ok':False,'message':f'Nominał wymaga dokładnie {9*target} zmian (po {target} na osobę), ale maksymalna obsada miesiąca pozwala na {capacity}. Zmniejsz nominał lub zmień zasady obsady.','days':days}
+ # Wstepna kontrola liczby dostepnych miejsc na zmiany nocne i dzienne.
+ weekday_count=sum(day['type']=='weekday' for day in days)
+ sat_count=sum(day['type']=='sat' for day in days)
+ if 'quota' not in relax and 'balance' not in relax and 'fallback' not in relax:
+  min_nights=max(0,math.ceil((target-4)/2))
+  if 9*min_nights>3*weekday_count:
+   return {'ok':False,'status':2,'message':f'Za malo miejsc nocnych: potrzeba co najmniej {9*min_nights}, dostepnych maksymalnie {3*weekday_count}.','days':days}
+  min_days=max(0,math.ceil((target-4)/2))
+  if 9*min_days>3*weekday_count+2*sat_count:
+   return {'ok':False,'status':2,'message':'Za malo miejsc na zmiany dzienne przy wybranej rownowadze.','days':days}
  def idx(p,d,s):return (p*D+d)*2+s
  def add(terms,low=-np.inf,high=np.inf):rows.append(terms);lo.append(low);hi.append(high)
  for p in range(9):
@@ -47,28 +57,19 @@ def solve(payload, diagnostic=False, relax=None):
   # Dotyczy także ręcznych blokad i jest regułą bezwzględną.
   for d in range(D-1):
    add([(idx(p,d,1),1),(idx(p,d+1,0),1)],high=1)
-  active=block_days(year,month,days)
-  L=len(active)
-  def day_terms(k,coefficient=1):
-   return [(idx(p,active[k],t),coefficient) for t in range(2)]
   if 'blocks' not in relax:
-   for k in range(L-4):
-    add([term for j in range(k,k+5) for term in day_terms(j)],high=4)
-   # Początek bloku: po rozpoczęciu wymagane są co najmniej 3 dni pracy.
-   # Granice miesiąca traktowane jako nieznana kontynuacja bloku.
-   for k in range(1,L-2):
-    # Blok piątek-sobota jest dopuszczalny: niedziela go przerywa.
-    # Święto ustawowe wewnątrz bloku pozostaje neutralne.
-    add(day_terms(k)+day_terms(k-1,-1)+day_terms(k+1,-1),high=0)
-    if days[active[k+2]]['weekday']!=6:
-     add(day_terms(k)+day_terms(k-1,-1)+day_terms(k+2,-1),high=0)
-   # Nie dopuszczamy rozpoczynania nowego bloku od samej soboty.
-   for k in range(1,L):
-    if days[active[k]]['weekday']==5:
-     add(day_terms(k)+day_terms(k-1,-1),high=0)
-   # Nie znamy poprzedniego miesiąca: nie wymuszamy startu nowego
-   # 3-dniowego bloku w pierwszym dniu miesiąca. Kontynuacja jest możliwa.
-  if 'rest' not in relax:
+   # Bloki trwaja od 2 do 4 dni kalendarzowych.
+   # Pojedynczy dzien jest niedozwolony wewnatrz miesiaca;
+   # na granicy miesiaca nie znamy sasiedniego grafiku.
+   for d in range(1,D-1):
+    if 'singletons' in relax:break
+    if days[d]['type']=='closed':continue
+    add([(idx(p,d,t),1) for t in range(2)]
+        +[(idx(p,d-1,t),-1) for t in range(2)]
+        +[(idx(p,d+1,t),-1) for t in range(2)],high=0)
+   for d in range(D-4):
+    add([(idx(p,j,t),1) for j in range(d,d+5) for t in range(2)],high=4)
+  if 'rest' not in relax and 'one_day_rest' not in relax:
    # Dwa dni odpoczynku liczymy kalendarzowo, również przez święta.
    for d in range(D-2):
     add([(idx(p,d,t),1) for t in range(2)]
@@ -80,16 +81,16 @@ def solve(payload, diagnostic=False, relax=None):
      add([(idx(p,d,t),1) for t in range(2)]
          +[(idx(p,d+2,t),1) for t in range(2)],high=1)
   if 'rotation' not in relax:
-   for k in range(L-1):
-    d=active[k];n=active[k+1]
+   for d in range(D-1):
+    n=d+1
     add([(idx(p,d,0),1),(idx(p,n,1),1)],high=1)
     add([(idx(p,d,1),1),(idx(p,n,0),1)],high=1)
-  excluded=all(days[d]['type']=='closed' or locks.get(f'{PEOPLE[p]}-{d+1}')=='W' for d in range(D)) and any(locks.get(f'{PEOPLE[p]}-{d+1}')=='W' for d in range(D))
-  quota=0 if excluded else target
-  if 'quota' not in relax:add([(idx(p,d,s),1) for d in range(D) for s in range(2)],low=quota)
-  if PEOPLE[p]=='E' and 'special' not in relax:
-   for d in range(D-3):add([(idx(p,t,1),1) for t in range(d,d+4)],high=3)
-   for d in range(min(2,D)):add([(idx(p,d,0),1)],high=0)
+  quota=target
+  if 'quota' not in relax and 'fallback' not in relax:add([(idx(p,d,s),1) for d in range(D) for s in range(2)],low=quota,high=quota)
+  if 'fallback' in relax:add([(idx(p,d,s),1) for d in range(D) for s in range(2)],high=quota)
+  if 'balance' not in relax:
+   # Roznica miedzy zmianami 6 i 18 nie moze przekroczyc 4.
+   add([(idx(p,d,0),1) for d in range(D)]+[(idx(p,d,1),-1) for d in range(D)],low=-4,high=4)
  weekly={} if 'weekly' in relax else payload.get('weeklyShifts',{})
  for key,group in weekly.items():
   try: monday=datetime.date.fromisoformat(key)
@@ -109,54 +110,99 @@ def solve(payload, diagnostic=False, relax=None):
  A=lil_matrix((len(rows),N),dtype=float)
  for r,terms in enumerate(rows):
   for j,v in terms:A[r,j]+=v
- c=np.zeros(N)
+ c=np.array([(-1.0+0.00001*(d%7)) if 'fallback' in relax else 0.001*(d%7) for p in range(9) for d in range(D) for shift in range(2)])
  res=milp(c,integrality=np.ones(N),bounds=Bounds(np.zeros(N),np.ones(N)),constraints=LinearConstraint(A.tocsr(),np.array(lo),np.array(hi)),options={'time_limit':20 if relax else 120})
+ # Diagnostycznie: przy dopuszczonym jednym dniu wolnym minimalizuj
+ # liczbe takich przerw, zachowujac wszystkie pozostale ograniczenia.
+ if 'one_day_rest' in relax and 'fallback' not in relax and res.x is not None:
+  gaps=9*(D-2);B=lil_matrix((len(rows)+gaps,N+gaps),dtype=float)
+  B[:len(rows),:N]=A
+  lower=np.r_[np.array(lo),np.full(gaps,-np.inf)]
+  upper=np.r_[np.array(hi),np.full(gaps,1.0)]
+  for p in range(9):
+   for d in range(D-2):
+    k=p*(D-2)+d;r=len(rows)+k
+    for t in range(2):
+     B[r,idx(p,d,t)]=1
+     B[r,idx(p,d+1,t)]=-1
+     B[r,idx(p,d+2,t)]=1
+    B[r,N+k]=-1
+  objective=np.r_[np.zeros(N),np.ones(gaps)]
+  best=milp(objective,integrality=np.ones(N+gaps),
+            bounds=Bounds(np.zeros(N+gaps),np.ones(N+gaps)),
+            constraints=LinearConstraint(B.tocsr(),lower,upper),
+            options={'time_limit':60})
+  if best.x is not None:res=best
+ # Drugi etap: przy zachowaniu uzyskanej liczby zmian minimalizuj
+ # największy niedobór pojedynczego pracownika (minimax).
+ if 'fallback' in relax and res.x is not None:
+  total=int(round(sum(res.x[:N])))
+  B=lil_matrix((len(rows)+10,N+1),dtype=float)
+  B[:len(rows),:N]=A
+  low2=list(lo)+[total]+[-np.inf]*9
+  high2=list(hi)+[np.inf]+[0]*9
+  B[len(rows),:N]=1
+  for p in range(9):
+   for d in range(D):
+    for sh in range(2):B[len(rows)+1+p,idx(p,d,sh)]=-1
+   B[len(rows)+1+p,N]=-1
+  # -liczba_zmian - max_niedobor <= -target
+  for p in range(9):high2[len(rows)+1+p]=-target
+  fair_obj=np.zeros(N+1);fair_obj[N]=1
+  fair=milp(fair_obj,integrality=np.r_[np.ones(N),0],
+            bounds=Bounds(np.zeros(N+1),np.r_[np.ones(N),target]),
+            constraints=LinearConstraint(B.tocsr(),np.array(low2),np.array(high2)),
+            options={'time_limit':40})
+  if fair.x is not None:res=fair
  if res.x is None:
+  if not relax and res.status==2 and not diagnostic:
+   alternative=solve(payload,False,{'fallback'})
+   if alternative.get('ok'):
+    alternative['partial']=True
+    alternative['status']=2
+    alternative['message']='Pełny nominał jest niewykonalny. Wygenerowano grafik z brakami godzinowymi, zachowując pozostałe zasady.'
+    return alternative
   report=[]
   if diagnostic and res.status==2:
-   for group,label in [('blocks','maksymalnie 4 dni pracy'),('rest','dwa dni odpoczynku'),('rotation','jednolita zmiana w bloku'),('special','ograniczenia pracownika E'),('weekly','wybory tygodniowe'),('quota','minimalny nominał'),('staffing','obsada zmian')]:
+   for group,label in [('blocks','maksymalnie 4 dni pracy'),('rest','dwa dni odpoczynku'),('rotation','jednolita zmiana w bloku'),('balance','równowaga zmian 6/18'),('weekly','wybory tygodniowe'),('quota','minimalny nominał'),('staffing','obsada zmian')]:
     probe=solve(payload,False,{group})
     report.append({'group':group,'label':label,'feasible':probe['ok'],'status':probe.get('status')})
-  return {'ok':False,'status':int(res.status),'diagnostics':report,'message':f'Nie znaleziono grafiku z minimum {target*12} h na aktywną osobę. Status solvera: {res.message}. '+('Diagnostyka: '+('; '.join(x['label']+(' — usunięcie tej jednej reguły pozwala znaleźć grafik' if x['feasible'] else ' — brak potwierdzenia, że sama ta reguła blokuje grafik') for x in report)) if report else 'Spróbuj diagnostyki.'),'days':days}
+  return {'ok':False,'status':int(res.status),'diagnostics':report,'message':f'Nie znaleziono grafiku z dokładnie {target*12} h na osobę. Status solvera: {res.message}. '+('Diagnostyka: '+('; '.join(x['label']+(' — usunięcie tej jednej reguły pozwala znaleźć grafik' if x['feasible'] else ' — brak potwierdzenia, że sama ta reguła blokuje grafik') for x in report)) if report else 'Spróbuj diagnostyki.'),'days':days}
  sched={PEOPLE[p]:[('6' if res.x[idx(p,d,0)]>.5 else '18' if res.x[idx(p,d,1)]>.5 else '') for d in range(D)] for p in range(9)}
- return {'ok':True,'schedule':sched,'days':days,'message':f'Grafik wygenerowany. Każdy aktywny pracownik ma co najmniej {target*12} h przy nominale {nominal} h. Sprawdź pozostałe zasady.'}
-def validate(payload):
+ shortfalls=[{'employee':p,'hours':12*sum(x in ('6','18') for x in sched[p]),'required':target*12,'missing':12*(target-sum(x in ('6','18') for x in sched[p]))} for p in PEOPLE]
+ one_day_breaks=sum(sched[p][d] in ('6','18') and sched[p][d+1]=='' and sched[p][d+2] in ('6','18') for p in PEOPLE for d in range(D-2))
+ return {'ok':True,'schedule':sched,'days':days,'one_day_breaks':one_day_breaks,'partial':'fallback' in relax,'shortfalls':shortfalls,'message':f'Grafik wygenerowany. Wymagany wymiar: {target*12} h na osobę (nominał {nominal} h).'}
+def validate(payload,allow_shortfall=False,allow_one_day_rest=False):
  days=build_days(int(payload['year']),int(payload['month']),set(map(int,payload.get('closed',[]))))
  sched=payload['schedule'];issues=[];nominal=int(payload.get('nominal',176));target=max(0,math.ceil(nominal/12))
  for p in PEOPLE:
   vals=sched.get(p,[])
   if len(vals)!=len(days):issues.append(f'{p}: niepełny grafik');continue
   worked=sum(v in ('6','18') for v in vals)
-  excluded=all(days[d]['type']=='closed' or payload.get('locks',{}).get(f'{p}-{d+1}')=='W' for d in range(len(days))) and any(payload.get('locks',{}).get(f'{p}-{d+1}')=='W' for d in range(len(days)))
-  expected=0 if excluded else target
-  if worked<expected:issues.append(f'{p}: {worked*12} h, wymagane minimum {expected*12} h (nominał {nominal} h)')
+  expected=target
+  if worked!=expected and not (allow_shortfall and worked<expected):issues.append(f'{p}: {worked*12} h, wymagane dokładnie {expected*12} h (nominał {nominal} h)')
+  if abs(vals.count('6')-vals.count('18'))>4:issues.append(f'{p}: różnica zmian 6/18 przekracza 4')
   for d,day in enumerate(days):
    if day['type']=='closed' and vals[d] in ('6','18'):issues.append(f'{p}, dzień {d+1}: praca w dniu zamkniętym')
    if day['type']=='sat' and vals[d]=='18':issues.append(f'{p}, dzień {d+1}: nocna zmiana w sobotę')
-  active=block_days(int(payload['year']),int(payload['month']),days)
-  seq=[vals[d] for d in active]
-  for d in range(len(vals)-2):
-   if vals[d] in ('6','18') and vals[d+1] not in ('6','18') and vals[d+2] in ('6','18'):
-    issues.append(f'{p}: tylko jeden dzień wolny między dniami {d+1} i {d+3}')
-   if days[d]['weekday']==5 and vals[d] in ('6','18') and vals[d+2] in ('6','18'):
-    issues.append(f'{p}: poniedziałek po sobocie {d+1} musi być wolny')
   for d in range(len(vals)-1):
    if vals[d]=='18' and vals[d+1]=='6':issues.append(f'{p}: niedozwolone przejście 18→6 w dniach {d+1}–{d+2}')
-  for k in range(len(seq)-4):
-   if all(v in ('6','18') for v in seq[k:k+5]):issues.append(f'{p}: ponad 4 dni pracy od {active[k]+1}')
-  k=0
-  while k<len(seq):
-   if seq[k] not in ('6','18'):
-    k+=1
-    continue
-   start=k
-   while k<len(seq) and seq[k] in ('6','18'):k+=1
-   run=k-start
-   end_is_saturday=days[active[k-1]]['weekday']==5
-   min_run=2 if end_is_saturday else 3
-   if run<min_run and start>0 and k<len(seq):issues.append(f'{p}: blok krótszy niż {min_run} dni od {active[start]+1}')
-   if k+1<len(seq) and seq[k+1] in ('6','18'):issues.append(f'{p}: brak 2 dni wolnych po {active[k-1]+1}')
-   if len(set(seq[start:k]))>1:issues.append(f'{p}: mieszane zmiany w bloku od {active[start]+1}')
+   if vals[d] in ('6','18') and vals[d+1] in ('6','18') and vals[d]!=vals[d+1]:
+    issues.append(f'{p}: mieszane zmiany w bloku {d+1}–{d+2}')
+  for d in range(len(vals)-4):
+   if all(v in ('6','18') for v in vals[d:d+5]):issues.append(f'{p}: ponad 4 dni pracy od {d+1}')
+  for d in range(1,len(vals)-1):
+   if vals[d] in ('6','18') and vals[d-1] not in ('6','18') and vals[d+1] not in ('6','18'):
+    issues.append(f'{p}: pojedynczy dzień pracy {d+1}')
+  for d in range(len(vals)-2):
+   if not allow_one_day_rest and vals[d] in ('6','18') and vals[d+1] not in ('6','18') and vals[d+2] in ('6','18'):
+    issues.append(f'{p}: tylko jeden dzień wolny między dniami {d+1} i {d+3}')
+   if not allow_one_day_rest and days[d]['weekday']==5 and vals[d] in ('6','18') and vals[d+2] in ('6','18'):
+    issues.append(f'{p}: poniedziałek po sobocie {d+1} musi być wolny')
+  for d,v in enumerate(vals):
+   locked=payload.get('locks',{}).get(f'{p}-{d+1}')
+   if locked=='W' and v in ('6','18'):issues.append(f'{p}, dzień {d+1}: naruszona blokada wolnego')
+   if locked in ('6','18') and v!=locked:issues.append(f'{p}, dzień {d+1}: naruszona blokada {locked}')
  for d,day in enumerate(days):
   for shift in (['6'] if day['type']=='sat' else ['6','18'] if day['type']=='weekday' else []):
    workers=[p for p in PEOPLE if len(sched.get(p,[]))>d and sched[p][d]==shift]
