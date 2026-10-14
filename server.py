@@ -14,14 +14,13 @@ class Handler(SimpleHTTPRequestHandler):
    if path=='/api/diagnose':return self.json(solve(data,diagnostic=True))
    if path=='/api/validate':return self.json({'issues':validate(data,allow_shortfall=bool(data.get('partial')),allow_one_day_rest=bool(data.get('oneDayRestTest'))),'shortfalls':[{'employee':p,'hours':12*sum(x in ('6','18') for x in data['schedule'][p]),'missing':max(0,12*__import__('math').ceil(int(data.get('nominal',176))/12)-12*sum(x in ('6','18') for x in data['schedule'][p]))} for p in PEOPLE]})
    if path=='/api/export':
-    issues=validate(data,allow_shortfall=bool(data.get('partial')))
-    if issues:return self.json({'error':'Grafik narusza zasady','issues':issues},422)
-    return self.export(data)
+    issues=validate(data,allow_shortfall=bool(data.get('partial')),allow_one_day_rest=bool(data.get('oneDayRestTest')))
+    return self.export(data,issues)
    return self.json({'error':'Nieznana ścieżka'},404)
   except Exception as e:return self.json({'error':str(e)},400)
  def json(self,obj,status=200):
   b=json.dumps(obj,ensure_ascii=False).encode();self.send_response(status);self.send_header('Content-Type','application/json; charset=utf-8');self.send_header('Content-Length',str(len(b)));self.end_headers();self.wfile.write(b)
- def export(self,data):
+ def export(self,data,issues=None):
   days=build_days(int(data['year']),int(data['month']),set(map(int,data.get('closed',[]))))
   wb=Workbook();ws=wb.active;ws.title='Grafik miesięczny';D=len(days)
   ws.append(['Pracownik']+[x['day'] for x in days]+['Godziny','Zm. 6','Zm. 18','Nominał','Nadgodziny'])
@@ -42,6 +41,11 @@ class Handler(SimpleHTTPRequestHandler):
      row[0].fill=PatternFill('solid',fgColor='F2E8FA' if day['type']=='closed' else 'FFF0C9')
   info=wb.create_sheet('Informacje')
   for row in [['Generator Grafiku WEB','v1'],['Miesiąc',str(data['month'])+'/'+str(data['year'])],['Nominał',int(data.get('nominal',176))],['Uwaga','Grafik z niedoborami godzin' if data.get('partial') else 'Format importu ShiftMate wymaga potwierdzenia']]:info.append(row)
+  if issues:
+   warnings=wb.create_sheet('Ostrzeżenia')
+   warnings.append(['UWAGA: Grafik roboczy – wykryto naruszenia zasad. Nie używać bez weryfikacji.'])
+   for issue in issues:warnings.append([issue])
+   warnings.column_dimensions['A'].width=110
   import io
   out=io.BytesIO();wb.save(out);b=out.getvalue()
   self.send_response(200);self.send_header('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');self.send_header('Content-Disposition','attachment; filename="Grafik_%s_%02d.xlsx"'%(data['year'],int(data['month'])));self.send_header('Content-Length',str(len(b)));self.end_headers();self.wfile.write(b)

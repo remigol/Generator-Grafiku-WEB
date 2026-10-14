@@ -5,6 +5,25 @@ from pathlib import Path
 from solver import solve, validate, build_days, PEOPLE
 
 class SolverTests(unittest.TestCase):
+    def test_export_manual_edits_with_warnings(self):
+        import io
+        from openpyxl import load_workbook
+        from server import Handler
+        class Dummy:
+            def __init__(self):self.wfile=io.BytesIO();self.status=None
+            def send_response(self,status):self.status=status
+            def send_header(self,*args):pass
+            def end_headers(self):pass
+        data={"year":2026,"month":11,"nominal":160,"closed":[],"schedule":{p:[""]*30 for p in PEOPLE}}
+        data["schedule"]["A"][1]="6"
+        issues=["A: testowe naruszenie zasad"]
+        dummy=Dummy()
+        Handler.export(dummy,data,issues)
+        self.assertEqual(dummy.status,200)
+        wb=load_workbook(io.BytesIO(dummy.wfile.getvalue()))
+        self.assertEqual(wb["Grafik miesięczny"]["C2"].value,"6")
+        self.assertEqual(wb["Ostrzeżenia"]["A2"].value,issues[0])
+        self.assertIn("Informacje",wb.sheetnames)
     def test_syntax(self):
         ast.parse(Path("solver.py").read_text(encoding="utf-8"))
     def test_weekly_full_leave_validation(self):
