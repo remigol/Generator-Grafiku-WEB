@@ -111,6 +111,27 @@ def solve(payload, diagnostic=False, relax=None):
   for j,v in terms:A[r,j]+=v
  c=np.array([(-1.0+0.00001*(d%7)) if 'fallback' in relax else 0.001*(d%7) for p in range(9) for d in range(D) for shift in range(2)])
  res=milp(c,integrality=np.ones(N),bounds=Bounds(np.zeros(N),np.ones(N)),constraints=LinearConstraint(A.tocsr(),np.array(lo),np.array(hi)),options={'time_limit':20 if relax else 120})
+ # Drugi etap: przy zachowaniu uzyskanej liczby zmian minimalizuj
+ # największy niedobór pojedynczego pracownika (minimax).
+ if 'fallback' in relax and res.x is not None:
+  total=int(round(sum(res.x[:N])))
+  B=lil_matrix((len(rows)+10,N+1),dtype=float)
+  B[:len(rows),:N]=A
+  low2=list(lo)+[total]+[-np.inf]*9
+  high2=list(hi)+[np.inf]+[0]*9
+  B[len(rows),:N]=1
+  for p in range(9):
+   for d in range(D):
+    for sh in range(2):B[len(rows)+1+p,idx(p,d,sh)]=-1
+   B[len(rows)+1+p,N]=-1
+  # -liczba_zmian - max_niedobor <= -target
+  for p in range(9):high2[len(rows)+1+p]=-target
+  fair_obj=np.zeros(N+1);fair_obj[N]=1
+  fair=milp(fair_obj,integrality=np.r_[np.ones(N),0],
+            bounds=Bounds(np.zeros(N+1),np.r_[np.ones(N),target]),
+            constraints=LinearConstraint(B.tocsr(),np.array(low2),np.array(high2)),
+            options={'time_limit':40})
+  if fair.x is not None:res=fair
  if res.x is None:
   if not relax and res.status==2 and not diagnostic:
    alternative=solve(payload,False,{'fallback'})
