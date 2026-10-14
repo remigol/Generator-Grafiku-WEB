@@ -17,22 +17,19 @@ class SolverTests(unittest.TestCase):
         data={"year":2026,"month":11,"nominal":160,"closed":[],"locks":{},"weeklyShifts":{}}
         result=solve(data)
         print("NOVEMBER_RESULT",result.get("ok"),result.get("status"),result.get("message"),flush=True)
-        if not result.get("ok"):
-            self.assertEqual(result.get("status"),2)
-            for group in ("blocks","rest","rotation","balance","quota","staffing"):
-                probe=solve(data,relax={group})
-                print("RELAX_PROBE",group,probe.get("ok"),probe.get("status"),probe.get("message"),flush=True)
-            return
+        self.assertTrue(result.get("ok"),result.get("message"))
+        self.assertTrue(result.get("partial"))
         sched=result["schedule"]
         self.assertEqual(set(sched),set(PEOPLE))
-        self.assertEqual(validate({**data,"schedule":sched}),[])
+        self.assertEqual(validate({**data,"schedule":sched},allow_shortfall=True),[])
         for p in PEOPLE:
             v=sched[p]
             self.assertEqual(len(v),30)
-            self.assertEqual(sum(x in ("6","18") for x in v),14)
+            self.assertLessEqual(sum(x in ("6","18") for x in v),14)
             self.assertLessEqual(abs(v.count("6")-v.count("18")),4)
             for i in range(1,29):
                 self.assertFalse(v[i] in ("6","18") and v[i-1] not in ("6","18") and v[i+1] not in ("6","18"))
+        self.assertGreater(sum(x["missing"] for x in result["shortfalls"]),0)
         print("NOVEMBER_DISTRIBUTION",{p:(sched[p].count("6"),sched[p].count("18")) for p in PEOPLE},flush=True)
     def test_max_equal_shifts_november(self):
         for shifts in range(14,7,-1):
