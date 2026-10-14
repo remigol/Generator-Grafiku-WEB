@@ -95,6 +95,51 @@ class SolverTests(unittest.TestCase):
         print("DAILY_REST_UNDER_11H",short_daily,flush=True)
         print("ROLLING_7DAY_UNDER_35H",len(weekly_gaps),weekly_gaps[:15],flush=True)
         self.assertEqual(short_daily,[])
+    def test_manual_constraints_november_comparison(self):
+        from datetime import datetime,timedelta
+        base={"year":2026,"month":11,"nominal":168,"closed":[],"locks":{},"weeklyShifts":{}}
+        # Dwa wolne dni na osobę: wybrane dni otwarcia, nie święta/niedziele.
+        off={"A":[4,12],"B":[5,18],"C":[6,23],"D":[9,25],"E":[10,24],
+             "F":[12,26],"G":[13,27],"H":[16,25],"I":[17,23]}
+        locks={f"{p}-{d}":"W" for p,dates in off.items() for d in dates}
+        weekly={
+          "2026-11-02":{"A":"6","B":"6","C":"18"},
+          "2026-11-09":{"D":"6","E":"6","G":"18"},
+          "2026-11-16":{"F":"18","H":"18","I":"18"},
+        }
+        variants=[("BASE",base),("MANUAL",{**base,"locks":locks,"weeklyShifts":weekly})]
+        for label,payload in variants:
+            result=solve(payload,relax={"one_day_rest"})
+            print("MANUAL_COMPARE",label,"EXACT",result.get("ok"),"STATUS",result.get("status"),flush=True)
+            if not result.get("ok"):
+                fallback=solve(payload,relax={"one_day_rest","fallback"})
+                print("MANUAL_COMPARE",label,"FALLBACK",fallback.get("ok"),"STATUS",fallback.get("status"),flush=True)
+                if not fallback.get("ok"):continue
+                result=fallback
+            sched=result["schedule"]
+            hours={p:12*sum(v in ("6","18") for v in sched[p]) for p in PEOPLE}
+            issues=validate({**payload,"schedule":sched},allow_shortfall=True)
+            rest_issues=[x for x in issues if "tylko jeden dzień wolny" in x or "poniedziałek po sobocie" in x]
+            other=[x for x in issues if x not in rest_issues]
+            self.assertEqual(other,[])
+            daily=[];weekly_bad=[]
+            for p in PEOPLE:
+                shifts=[]
+                for d,v in enumerate(sched[p]):
+                    if v in ("6","18"):
+                        a=datetime(2026,11,d+1,int(v));shifts.append((a,a+timedelta(hours=12)))
+                for a,b in zip(shifts,shifts[1:]):
+                    gap=(b[0]-a[1]).total_seconds()/3600
+                    if gap<11:daily.append((p,a[0].day,b[0].day,gap))
+                for d in range(1,25):
+                    left=datetime(2026,11,d);right=left+timedelta(days=7)
+                    intervals=[(left,left)]+[(max(left,a),min(right,b)) for a,b in shifts if a<right and b>left]+[(right,right)]
+                    intervals.sort()
+                    gap=max((intervals[i+1][0]-intervals[i][1]).total_seconds()/3600 for i in range(len(intervals)-1))
+                    if gap<35:weekly_bad.append((p,d,round(gap,1)))
+            print("MANUAL_HOURS",label,hours,flush=True)
+            print("MANUAL_REST",label,"ONE_DAY",len(rest_issues),"DAILY_UNDER_11",daily,"ROLLING_WEEK_UNDER_35",len(weekly_bad),weekly_bad[:30],flush=True)
+            self.assertEqual(daily,[])
     def test_validator_rejects_invalid(self):
         data={"year":2026,"month":11,"nominal":160,"schedule":{p:[""]*30 for p in PEOPLE}}
         issues=validate(data)
