@@ -59,6 +59,41 @@ class SolverTests(unittest.TestCase):
             print("SINGLETONS_COUNT",len(singleton_issues),flush=True)
         else:
             self.assertIn(result.get("status"),(1,2))
+    def test_one_day_rest_november_168_diagnostic(self):
+        from datetime import datetime, timedelta
+        data={"year":2026,"month":11,"nominal":168,"closed":[],"locks":{},"weeklyShifts":{}}
+        result=solve(data,relax={"one_day_rest"})
+        print("ONE_DAY_REST_168",result.get("ok"),result.get("status"),result.get("message"),flush=True)
+        if not result.get("ok"):
+            self.assertIn(result.get("status"),(1,2))
+            return
+        schedule=result["schedule"]
+        issues=validate({**data,"schedule":schedule})
+        rest_issues=[i for i in issues if "tylko jeden dzień wolny" in i or "poniedziałek po sobocie" in i]
+        self.assertEqual([i for i in issues if i not in rest_issues],[])
+        self.assertTrue(all(sum(v in ("6","18") for v in schedule[p])==14 for p in PEOPLE))
+        short_daily=[];weekly_gaps=[]
+        for p in PEOPLE:
+            shifts=[]
+            for d,v in enumerate(schedule[p]):
+                if v in ("6","18"):
+                    start=datetime(2026,11,d+1,int(v))
+                    shifts.append((start,start+timedelta(hours=12)))
+            for prev,nxt in zip(shifts,shifts[1:]):
+                gap=(nxt[0]-prev[1]).total_seconds()/3600
+                if gap<11:short_daily.append((p,prev[0].day,nxt[0].day,gap))
+            # Diagnostycznie: każda kolejna siedmiodniowa ramka musi
+            # zawierać nieprzerwany okres odpoczynku >=35 h.
+            for day in range(1,25):
+                a=datetime(2026,11,day);b=a+timedelta(days=7)
+                intervals=[(a,a)]+[(max(a,x),min(b,y)) for x,y in shifts if x<b and y>a]+[(b,b)]
+                intervals.sort()
+                max_gap=max((intervals[i+1][0]-intervals[i][1]).total_seconds()/3600 for i in range(len(intervals)-1))
+                if max_gap<35:weekly_gaps.append((p,day,round(max_gap,1)))
+        print("ONE_DAY_REST_VIOLATIONS",len(rest_issues),rest_issues[:12],flush=True)
+        print("DAILY_REST_UNDER_11H",short_daily,flush=True)
+        print("ROLLING_7DAY_UNDER_35H",len(weekly_gaps),weekly_gaps[:15],flush=True)
+        self.assertEqual(short_daily,[])
     def test_validator_rejects_invalid(self):
         data={"year":2026,"month":11,"nominal":160,"schedule":{p:[""]*30 for p in PEOPLE}}
         issues=validate(data)
