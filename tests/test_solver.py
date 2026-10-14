@@ -68,6 +68,7 @@ class SolverTests(unittest.TestCase):
             self.assertIn(result.get("status"),(1,2))
             return
         schedule=result["schedule"]
+        for d in range(30): print("SCHEDULE_ROW",d+1,",".join(schedule[p][d] or "-" for p in PEOPLE),flush=True)
         issues=validate({**data,"schedule":schedule})
         rest_issues=[i for i in issues if "tylko jeden dzień wolny" in i or "poniedziałek po sobocie" in i]
         self.assertEqual([i for i in issues if i not in rest_issues],[])
