@@ -69,7 +69,7 @@ def solve(payload, diagnostic=False, relax=None):
         +[(idx(p,d+1,t),-1) for t in range(2)],high=0)
    for d in range(D-4):
     add([(idx(p,j,t),1) for j in range(d,d+5) for t in range(2)],high=4)
-  if 'rest' not in relax:
+  if 'rest' not in relax and 'one_day_rest' not in relax:
    # Dwa dni odpoczynku liczymy kalendarzowo, również przez święta.
    for d in range(D-2):
     add([(idx(p,d,t),1) for t in range(2)]
