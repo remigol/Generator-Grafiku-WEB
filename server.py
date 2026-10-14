@@ -10,9 +10,9 @@ class Handler(SimpleHTTPRequestHandler):
    n=int(self.headers.get('Content-Length','0'))
    if n>200000:raise ValueError('Za duży formularz')
    data=json.loads(self.rfile.read(n));path=self.path.split('?')[0]
-   if path=='/api/generate':return self.json(solve(data))
+   if path=='/api/generate':return self.json(solve(data,relax={'one_day_rest'} if data.get('oneDayRestTest') else None))
    if path=='/api/diagnose':return self.json(solve(data,diagnostic=True))
-   if path=='/api/validate':return self.json({'issues':validate(data,allow_shortfall=bool(data.get('partial'))),'shortfalls':[{'employee':p,'hours':12*sum(x in ('6','18') for x in data['schedule'][p]),'missing':max(0,12*__import__('math').ceil(int(data.get('nominal',176))/12)-12*sum(x in ('6','18') for x in data['schedule'][p]))} for p in PEOPLE]})
+   if path=='/api/validate':return self.json({'issues':validate(data,allow_shortfall=bool(data.get('partial')),allow_one_day_rest=bool(data.get('oneDayRestTest'))),'shortfalls':[{'employee':p,'hours':12*sum(x in ('6','18') for x in data['schedule'][p]),'missing':max(0,12*__import__('math').ceil(int(data.get('nominal',176))/12)-12*sum(x in ('6','18') for x in data['schedule'][p]))} for p in PEOPLE]})
    if path=='/api/export':
     issues=validate(data,allow_shortfall=bool(data.get('partial')))
     if issues:return self.json({'error':'Grafik narusza zasady','issues':issues},422)
