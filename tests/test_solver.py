@@ -36,12 +36,12 @@ class SolverTests(unittest.TestCase):
             data={"year":2026,"month":11,"nominal":shifts*12,"closed":[],"locks":{},"weeklyShifts":{}}
             result=solve(data)
             print("CAPACITY_TEST",shifts,"shifts",shifts*12,"hours",result.get("ok"),result.get("status"),result.get("message"),flush=True)
-            if result.get("ok"):
+            if result.get("ok") and not result.get("partial"):
                 issues=validate({**data,"schedule":result["schedule"]})
                 print("VALIDATION",len(issues),issues[:8],flush=True)
                 self.assertEqual(issues,[])
                 return
-        self.fail("Nie znaleziono grafiku nawet dla 8 zmian na osobę")
+        self.fail("Nie znaleziono pełnego grafiku nawet dla 8 zmian na osobę")
     def test_validator_rejects_invalid(self):
         data={"year":2026,"month":11,"nominal":160,"schedule":{p:[""]*30 for p in PEOPLE}}
         issues=validate(data)
