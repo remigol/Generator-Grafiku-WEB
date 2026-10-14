@@ -172,7 +172,7 @@ def solve(payload, diagnostic=False, relax=None):
  shortfalls=[{'employee':p,'hours':12*sum(x in ('6','18') for x in sched[p]),'required':target*12,'missing':12*(target-sum(x in ('6','18') for x in sched[p]))} for p in PEOPLE]
  one_day_breaks=sum(sched[p][d] in ('6','18') and sched[p][d+1]=='' and sched[p][d+2] in ('6','18') for p in PEOPLE for d in range(D-2))
  return {'ok':True,'schedule':sched,'days':days,'one_day_breaks':one_day_breaks,'partial':'fallback' in relax,'shortfalls':shortfalls,'message':f'Grafik wygenerowany. Wymagany wymiar: {target*12} h na osobę (nominał {nominal} h).'}
-def validate(payload,allow_shortfall=False):
+def validate(payload,allow_shortfall=False,allow_one_day_rest=False):
  days=build_days(int(payload['year']),int(payload['month']),set(map(int,payload.get('closed',[]))))
  sched=payload['schedule'];issues=[];nominal=int(payload.get('nominal',176));target=max(0,math.ceil(nominal/12))
  for p in PEOPLE:
@@ -195,9 +195,9 @@ def validate(payload,allow_shortfall=False):
    if vals[d] in ('6','18') and vals[d-1] not in ('6','18') and vals[d+1] not in ('6','18'):
     issues.append(f'{p}: pojedynczy dzień pracy {d+1}')
   for d in range(len(vals)-2):
-   if vals[d] in ('6','18') and vals[d+1] not in ('6','18') and vals[d+2] in ('6','18'):
+   if not allow_one_day_rest and vals[d] in ('6','18') and vals[d+1] not in ('6','18') and vals[d+2] in ('6','18'):
     issues.append(f'{p}: tylko jeden dzień wolny między dniami {d+1} i {d+3}')
-   if days[d]['weekday']==5 and vals[d] in ('6','18') and vals[d+2] in ('6','18'):
+   if not allow_one_day_rest and days[d]['weekday']==5 and vals[d] in ('6','18') and vals[d+2] in ('6','18'):
     issues.append(f'{p}: poniedziałek po sobocie {d+1} musi być wolny')
   for d,v in enumerate(vals):
    locked=payload.get('locks',{}).get(f'{p}-{d+1}')
