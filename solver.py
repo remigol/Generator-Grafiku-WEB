@@ -32,6 +32,16 @@ def solve(payload, diagnostic=False, relax=None):
  capacity=sum(2 if day['type']=='sat' else 6 if day['type']=='weekday' else 0 for day in days)
  if 9*target>capacity and 'quota' not in relax:
   return {'ok':False,'message':f'Nominał wymaga minimum {9*target} zmian (po {target} na osobę), ale maksymalna obsada miesiąca pozwala na {capacity}. Zmniejsz nominał lub zmień zasady obsady.','days':days}
+ # Wstepna kontrola liczby dostepnych miejsc na zmiany nocne i dzienne.
+ weekday_count=sum(day['type']=='weekday' for day in days)
+ sat_count=sum(day['type']=='sat' for day in days)
+ if 'quota' not in relax and 'balance' not in relax:
+  min_nights=max(0,math.ceil((target-4)/2))
+  if 9*min_nights>3*weekday_count:
+   return {'ok':False,'status':2,'message':f'Za malo miejsc nocnych: potrzeba co najmniej {9*min_nights}, dostepnych maksymalnie {3*weekday_count}.','days':days}
+  min_days=max(0,math.ceil((target-4)/2))
+  if 9*min_days>3*weekday_count+2*sat_count:
+   return {'ok':False,'status':2,'message':'Za malo miejsc na zmiany dzienne przy wybranej rownowadze.','days':days}
  def idx(p,d,s):return (p*D+d)*2+s
  def add(terms,low=-np.inf,high=np.inf):rows.append(terms);lo.append(low);hi.append(high)
  for p in range(9):
@@ -52,8 +62,6 @@ def solve(payload, diagnostic=False, relax=None):
   def day_terms(k,coefficient=1):
    return [(idx(p,active[k],t),coefficient) for t in range(2)]
   if 'blocks' not in relax:
-   for k in range(L-4):
-    add([term for j in range(k,k+5) for term in day_terms(j)],high=4)
    # Bloki trwaja od 2 do 4 dni kalendarzowych.
    # Pojedynczy dzien jest niedozwolony wewnatrz miesiaca;
    # na granicy miesiaca nie znamy sasiedniego grafiku.
@@ -80,8 +88,7 @@ def solve(payload, diagnostic=False, relax=None):
     n=d+1
     add([(idx(p,d,0),1),(idx(p,n,1),1)],high=1)
     add([(idx(p,d,1),1),(idx(p,n,0),1)],high=1)
-  excluded=all(days[d]['type']=='closed' or locks.get(f'{PEOPLE[p]}-{d+1}')=='W' for d in range(D)) and any(locks.get(f'{PEOPLE[p]}-{d+1}')=='W' for d in range(D))
-  quota=0 if excluded else target
+  quota=target
   if 'quota' not in relax:add([(idx(p,d,s),1) for d in range(D) for s in range(2)],low=quota,high=quota)
   if 'balance' not in relax:
    # Roznica miedzy zmianami 6 i 18 nie moze przekroczyc 4.
@@ -123,8 +130,7 @@ def validate(payload):
   vals=sched.get(p,[])
   if len(vals)!=len(days):issues.append(f'{p}: niepełny grafik');continue
   worked=sum(v in ('6','18') for v in vals)
-  excluded=all(days[d]['type']=='closed' or payload.get('locks',{}).get(f'{p}-{d+1}')=='W' for d in range(len(days))) and any(payload.get('locks',{}).get(f'{p}-{d+1}')=='W' for d in range(len(days)))
-  expected=0 if excluded else target
+  expected=target
   if worked!=expected:issues.append(f'{p}: {worked*12} h, wymagane dokładnie {expected*12} h (nominał {nominal} h)')
   if abs(vals.count('6')-vals.count('18'))>4:issues.append(f'{p}: różnica zmian 6/18 przekracza 4')
   for d,day in enumerate(days):
