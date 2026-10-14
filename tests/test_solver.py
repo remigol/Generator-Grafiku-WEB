@@ -34,6 +34,17 @@ class SolverTests(unittest.TestCase):
             for i in range(1,29):
                 self.assertFalse(v[i] in ("6","18") and v[i-1] not in ("6","18") and v[i+1] not in ("6","18"))
         print("NOVEMBER_DISTRIBUTION",{p:(sched[p].count("6"),sched[p].count("18")) for p in PEOPLE},flush=True)
+    def test_max_equal_shifts_november(self):
+        for shifts in range(14,7,-1):
+            data={"year":2026,"month":11,"nominal":shifts*12,"closed":[],"locks":{},"weeklyShifts":{}}
+            result=solve(data)
+            print("CAPACITY_TEST",shifts,"shifts",shifts*12,"hours",result.get("ok"),result.get("status"),result.get("message"),flush=True)
+            if result.get("ok"):
+                issues=validate({**data,"schedule":result["schedule"]})
+                print("VALIDATION",len(issues),issues[:8],flush=True)
+                self.assertEqual(issues,[])
+                return
+        self.fail("Nie znaleziono grafiku nawet dla 8 zmian na osobę")
     def test_validator_rejects_invalid(self):
         data={"year":2026,"month":11,"nominal":160,"schedule":{p:[""]*30 for p in PEOPLE}}
         issues=validate(data)
