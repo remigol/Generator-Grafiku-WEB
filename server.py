@@ -23,22 +23,45 @@ class Handler(SimpleHTTPRequestHandler):
  def export(self,data,issues=None):
   days=build_days(int(data['year']),int(data['month']),set(map(int,data.get('closed',[]))))
   wb=Workbook();ws=wb.active;ws.title='Grafik miesięczny';D=len(days)
-  ws.append(['Pracownik']+[x['day'] for x in days]+['Godziny','Zm. 6','Zm. 18','Nominał','Nadgodziny'])
+  from openpyxl.styles import PatternFill,Font,Alignment
+  from openpyxl.utils import get_column_letter
+  ws.append(['Data','Dzień tygodnia']+PEOPLE+['Obsada 6','Obsada 18'])
+  weekdays=('Pn','Wt','Śr','Cz','Pt','So','Nd')
+  for i,day in enumerate(days):
+   date=datetime.date(int(data['year']),int(data['month']),day['day'])
+   row=[date,weekdays[day['weekday']]]+[data['schedule'][p][i] or '' for p in PEOPLE]
+   row.extend([sum(data['schedule'][p][i]=='6' for p in PEOPLE),sum(data['schedule'][p][i]=='18' for p in PEOPLE)])
+   ws.append(row)
+   ws.cell(i+2,1).number_format='DD.MM.YYYY'
+   if day['type']!='weekday':
+    bg='F2E8FA' if day['type']=='closed' else 'FFF0C9'
+    for cell in ws[i+2]:cell.fill=PatternFill('solid',fgColor=bg)
+   for j,p in enumerate(PEOPLE,3):
+    cell=ws.cell(i+2,j)
+    if cell.value=='6':cell.fill=PatternFill('solid',fgColor='DDF2E5')
+    elif cell.value=='18':cell.fill=PatternFill('solid',fgColor='E4E7FA')
+  for cell in ws[1]:
+   cell.fill=PatternFill('solid',fgColor='17324E')
+   cell.font=Font(color='FFFFFF',bold=True)
+  ws.freeze_panes='C2'
+  ws.auto_filter.ref=f'A1:M{D+1}'
+  ws.column_dimensions['A'].width=15
+  ws.column_dimensions['B'].width=17
+  for j in range(3,12):ws.column_dimensions[get_column_letter(j)].width=9
+  ws.column_dimensions['L'].width=13
+  ws.column_dimensions['M'].width=14
+  for row in ws.iter_rows(min_row=2):
+   for cell in row[1:]:cell.alignment=Alignment(horizontal='center')
+  summary=wb.create_sheet('Podsumowanie')
+  summary.append(['Pracownik','Godziny','Zm. 6','Zm. 18','Nominał','Nadgodziny'])
   for p in PEOPLE:
    v=data['schedule'][p];h=12*sum(x in ('6','18') for x in v);n=int(data.get('nominal',176))
-   ws.append([p]+v+[h,v.count('6'),v.count('18'),n,h-n])
-  ws.append(['Dzień tyg.']+[('Pn','Wt','Śr','Cz','Pt','So','Nd')[x['weekday']] for x in days])
-  ws.append(['Obsada 6']+[','.join(p for p in PEOPLE if data['schedule'][p][i]=='6') for i in range(D)])
-  ws.append(['Obsada 18']+[','.join(p for p in PEOPLE if data['schedule'][p][i]=='18') for i in range(D)])
-  from openpyxl.styles import PatternFill,Font
-  for c in ws[1]:c.fill=PatternFill('solid',fgColor='17324E');c.font=Font(color='FFFFFF',bold=True)
-  ws.freeze_panes='B2';ws.column_dimensions['A'].width=18
-  from openpyxl.utils import get_column_letter
-  for i,day in enumerate(days,2):
-   ws.column_dimensions[get_column_letter(i)].width=5
-   if day['type']!='weekday':
-    for row in ws.iter_rows(min_col=i,max_col=i):
-     row[0].fill=PatternFill('solid',fgColor='F2E8FA' if day['type']=='closed' else 'FFF0C9')
+   summary.append([p,h,v.count('6'),v.count('18'),n,h-n])
+  for cell in summary[1]:
+   cell.fill=PatternFill('solid',fgColor='17324E')
+   cell.font=Font(color='FFFFFF',bold=True)
+  summary.freeze_panes='B2'
+  for col in 'ABCDEF':summary.column_dimensions[col].width=17
   info=wb.create_sheet('Informacje')
   for row in [['Generator Grafiku WEB','v1'],['Miesiąc',str(data['month'])+'/'+str(data['year'])],['Nominał',int(data.get('nominal',176))],['Uwaga','Grafik z niedoborami godzin' if data.get('partial') else 'Format importu ShiftMate wymaga potwierdzenia']]:info.append(row)
   if issues:
